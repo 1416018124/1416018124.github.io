@@ -1,13 +1,21 @@
+
 <!DOCTYPE html>
-<html>
+<html lang="zh-cn">
+    
 <head>
-  <meta charset="utf-8">
-  
-  
-  <title>手动部署k8s | Hexo</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
-  <meta name="description" content="此文档是手动安装k8s集群，主要是用来学习k8s组件的使用及配置。">
-<meta property="og:type" content="article">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="generator" content="Hexo">
+    <title>手动部署k8s - Hexo</title>
+    <meta name="author" content="Jiang Feng">
+    
+        <meta name="keywords" content="javascript,hexo">
+    
+    
+    
+    <script type="application/ld+json">{"@context":"http://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Jiang Feng","sameAs":["https://github.com/1416018124"]},"articleBody":"此文档是手动安装k8s集群，主要是用来学习k8s组件的使用及配置。\n\n集群初始化安装1.拓扑规划：机器规划\n\n\nhostname\nrole\nip\n配置\nOS\ndeploy software\n\n\n\nk8s-01\nmaster\n192.168.3.24\n8c-32g\ndebian12.8\napiserver、controller-manager、scheduler、etcd、kubectl、kubelet、kube-proxy、containerd\n\n\nk8s-01\nworker\n192.168.3.25\n8c-32g\ndebian12.8\nkubelet、kube-proxy、containerd\n\n\nk8s-01\nworker\n192.168.3.26\n8c-32g\ndebian12.8\nkubelet、kube-proxy、containerd\n\n\n网络环境\n\n\n网段名称\n网段CIDR\n\n\n\n节点网段\n192.168.3.0&#x2F;24\n\n\npod网段\n172.16.0.0&#x2F;16\n\n\nservice网段\n10.96.0.0&#x2F;16\n\n\n程序版本\n\n\nkubernetes程序\n程序版本\n\n\n\nkubernetes\n1.32.0\n\n\netcd\n3.5.7\n\n\ncfssl\n1.6.1\n\n\ncoredns\n1.9.3\n\n\nmetrics-server\n0.6.1\n\n\n\n\n\n基础软件\n软件版本\n\n\n\ncontainerd\n1.6.19\n\n\nrunc\n1.1.4\n\n\ncrictl\n1.24.1\n\n\n2.操作系统设置2.1swap设置由于k8s不支持swap，我们需要关闭swap:\n12swapoff -ased -ir &#x27;s/.*swap.*/#&amp;/&#x27; /etc/fstab\n\n\n\n2.2 设置hosts解析1234567root@k8s-01:~# cat /etc/hosts127.0.0.1\tlocalhost127.0.1.1\tk8s-01192.168.3.24 k8s-01192.168.3.25 k8s-02192.168.3.26 k8s-03\n\n\n\n2.3安装软件和工具1apt-get install curl iptables containerd vim sudo -y\n\n\n\n2.4配置ulimit12345678910# 文件句柄ulimit -SHn 65535 &amp;&amp; \\cat &gt; /etc/security/limits.conf &lt;&lt;EOF* soft nofile 655360* hard nofile 131072* soft nproc 655350* hard nproc 655350* soft memlock unlimited* hard memlock unlimitedEOF\n\n\n\n2.5启用ipvs&#x2F;安装ipvsadmin12345678910111213141516 apt-get install ipvsadm ipset sysstat conntrack  cat &gt; /etc/modules-load.d/ipvs.conf &lt;&lt;EOFip_vsip_vs_rrip_vs_wrrip_vs_shnf_conntrackip_tablesip_setxt_setipt_setipt_rpfilteript_REJECTipipEOF\n\n\n\n2.6启用overlay和br_netfilter12345678910cat &lt;&lt;EOF | sudo tee /etc/modules-load.d/k8s.confoverlaybr_netfilterEOFsystemctl restart systemd-modules-load.servicelsmod | grep br_netfilterlsmod | grep overlay\n\n\n\n2.7 修改内核参数1234567891011121314151617181920212223242526272829303132cat &gt; /etc/sysctl.d/95-k8s-sysctl.conf &lt;&lt;EOF net.ipv4.ip_forward = 1net.bridge.bridge-nf-call-iptables = 1net.bridge.bridge-nf-call-ip6tables = 1net.bridge.bridge-nf-call-arptables = 1fs.may_detach_mounts = 1vm.swappiness = 0vm.overcommit_memory=1vm.panic_on_oom=0vm.max_map_count=655360fs.inotify.max_user_watches=89100fs.file-max=52706963fs.nr_open=52706963net.netfilter.nf_conntrack_max=2310720net.ipv4.tcp_keepalive_time = 600net.ipv4.tcp_keepalive_probes = 3net.ipv4.tcp_keepalive_intvl =15net.ipv4.tcp_max_tw_buckets = 36000net.ipv4.tcp_tw_reuse = 1net.ipv4.tcp_max_orphans = 327680net.ipv4.tcp_orphan_retries = 3net.ipv4.tcp_syncookies = 1net.ipv4.tcp_max_syn_backlog = 16384net.ipv4.ip_conntrack_max = 65536net.ipv4.tcp_max_syn_backlog = 16384net.ipv4.tcp_timestamps = 0net.core.somaxconn = 16384EOFsysctl --system\n\n\n\n安装PKI管理工具-cfssl123456# 下载cfssl二进制程序wget https://github.com/cloudflare/cfssl/releases/download/v1.6.3/cfssl_1.6.3_linux_amd64 -O /usr/local/bin/cfsslwget https://github.com/cloudflare/cfssl/releases/download/v1.6.3/cfssljson_1.6.3_linux_amd64 -O /usr/local/bin/cfssljson# 添加执行权限chmod +x /usr/local/bin/cfssl*\n\n\n\n3.配置containerd3.1下载二进制文件12345678910111213mkdir -p /root/containerd/&#123;app,bin,cnibin,config,service&#125;cd /root/containerd# 下载二进制文件wget https://github.com/containerd/containerd/releases/download/v1.6.19/cri-containerd-cni-1.6.19-linux-amd64.tar.gz # 解压tar  --wildcards -xf app/cri-containerd-cni-1.6.19-linux-amd64.tar.gz --strip-components=3 -C bin usr/local/bin/&#123;containerd*,crictl,ctr&#125;tar --wildcards -xf app/containerd.tar.gz --strip-components=3 -C cnibin opt/cni/bin/*wget https://github.com/opencontainers/runc/releases/download/v1.1.4/runc.amd64 -O bin/runcchmod +x bin/runc\n\n\n\n3.2创建containerd服务在&#x2F;root&#x2F;containerd 创建以下两个配置文件\n12345678910111213141516171819202122232425262728293031cat service/containerd.service[Unit]Description=containerd container runtimeDocumentation=https://containerd.ioAfter=network.target local-fs.target[Service]ExecStartPre=-/sbin/modprobe overlayExecStart=/usr/local/bin/containerdType=notifyDelegate=yesKillMode=processRestart=alwaysRestartSec=5# Having non-zero Limit*s causes performance problems due to accounting overhead# in the kernel. We recommend using cgroups to do container-local accounting.LimitNPROC=infinityLimitCORE=infinityLimitNOFILE=infinity# Comment TasksMax if your systemd version does not supports it.# Only systemd 226 and above support this version.TasksMax=infinityOOMScoreAdjust=-999[Install]WantedBy=multi-user.targetcat config/containerd.confoverlaybr_netfilter\n\n\n\n3.3生成配置文件12345./bin/containerd config default &gt; config/config.tomlsed -i &#x27;s#root = \\&quot;/var/lib/containerd\\&quot;#root = \\&quot;/data/containerd\\&quot;#&#x27; config/config.tomlsed -i &#x27;s#sandbox_image = \\&quot;k8s.gcr.io/pause:#sandbox_image = \\&quot;registry.aliyuncs.com/google_containers/pause:#&#x27; config/config.tomlsed -i &#x27;s#sandbox_image = \\&quot;registry.k8s.io/pause:#sandbox_image = \\&quot;registry.aliyuncs.com/google_containers/pause:#&#x27; config/config.tomlsed -i &#x27;s#SystemdCgroup = false#SystemdCgroup = true#&#x27; config/config.toml\n\n\n\n3.4分发二进制和配置1234567891011for i in k8s-01 k8s-02 k8s-03; do \\ssh $i &quot;mkdir -p /etc/containerd&quot;; \\ssh $i &quot;mkdir -p /opt/cni/bin&quot;; \\ssh $i &quot;mkdir -p /opt/containerd&quot;; \\ssh $i &quot;mkdir -p /etc/cni/net.d&quot;; \\scp bin/* $i:/usr/local/bin/; \\scp cnibin/* $i:/opt/cni/bin/; \\scp service/containerd.service $i:/usr/lib/systemd/system/; \\scp config/config.toml $i:/etc/containerd/; \\scp config/containerd.conf $i:/etc/modules-load.d/; \\done\n\n\n\n3.5启动服务1234567for i in k8s-01 k8s-02 k8s-03; do \\ssh $i &quot;systemctl restart systemd-modules-load.service&quot;; \\ssh $i &quot;systemctl daemon-reload&quot;; \\ssh $i &quot;systemctl enable containerd&quot;; \\ssh $i &quot;systemctl restart containerd --no-block&quot;; \\ssh $i &quot;systemctl is-active containerd&quot;; \\done\n\n\n\n3.6配置cricti12345678910cat config/crictl.yamlruntime-endpoint: unix:///run/containerd/containerd.sockimage-endpoint: unix:///run/containerd/containerd.socktimeout: 10debug: falsefor i in k8s-01 k8s-02 k8s-03; do \\scp config/crictl.yaml $i:/etc/done\n\n\n\n3.7国内镜像代理在&#x2F;etc&#x2F;containerd&#x2F;config.toml 添加如下配置\n123456789101112[plugins.&quot;io.containerd.grpc.v1.cri&quot;.registry]      config_path = &quot;&quot;      [plugins.&quot;io.containerd.grpc.v1.cri&quot;.registry.auths]      [plugins.&quot;io.containerd.grpc.v1.cri&quot;.registry.configs]      [plugins.&quot;io.containerd.grpc.v1.cri&quot;.registry.headers]      [plugins.&quot;io.containerd.grpc.v1.cri&quot;.registry.mirrors]      [plugins.&quot;io.containerd.grpc.v1.cri&quot;.registry.mirrors.&quot;docker.io&quot;]         endpoint = [&quot;https://docker.m.daocloud.io&quot;]\n\n\n\n\n\n4 配置etcd4.1 下载etcd123456789# 创建保存配置的文件夹mkdir -p /root/etcd/&#123;bin,config,service,ssl,app&#125;cd /root/etcd# 下载etcd二进制文件# github二进制包下载地址：https://github.com/etcd-io/etcd/releaseswget https://github.com/etcd-io/etcd/releases/download/v3.5.7/etcd-v3.5.7-linux-amd64.tar.gz -O app/etcd.tar.gztar -xf app/etcd.tar.gz --strip-components=1 -C bin/ etcd-v3.5.7-linux-amd64/etcd&#123;,ctl&#125;\n\n\n\n4.2 生成CA使用的证书123456789101112131415161718192021222324252627282930313233343536373839cat /root/etcd/ca-config.json&#123;  &quot;signing&quot;: &#123;    &quot;default&quot;: &#123;      &quot;expiry&quot;: &quot;876000h&quot;    &#125;,    &quot;profiles&quot;: &#123;      &quot;etcd&quot;: &#123;        &quot;expiry&quot;: &quot;876000h&quot;,        &quot;usages&quot;: [          &quot;signing&quot;,          &quot;key encipherment&quot;,          &quot;server auth&quot;,\t  &quot;client auth&quot;        ]      &#125;    &#125;  &#125;&#125;cat /root/etcd/ca-csr.json&#123;  &quot;CN&quot;: &quot;etcd CA&quot;,  &quot;key&quot;: &#123;    &quot;algo&quot;: &quot;rsa&quot;,    &quot;size&quot;: 2048  &#125;,  &quot;names&quot;: [    &#123;      &quot;C&quot;: &quot;CN&quot;,      &quot;L&quot;: &quot;Beijing&quot;,      &quot;ST&quot;: &quot;Beijing&quot;,      &quot;O&quot;: &quot;feng&quot;,      &quot;OU&quot;: &quot;etcd&quot;    &#125;  ]&#125;\n\n\n\n生成ca证书\n12cd /root/etcdcfssl gencert -initca ca-csr.json | cfssljson -bare ssl/ca\n\n\n\n4.3生成etcd server端证书12345678910111213141516171819202122cat /root/etcd/server-csr.json&#123;    &quot;CN&quot;: &quot;etcd&quot;,    &quot;key&quot;: &#123;        &quot;algo&quot;: &quot;rsa&quot;,        &quot;size&quot;: 2048    &#125;,    &quot;hosts&quot;: [    &quot;192.168.3.24&quot;,    &quot;192.168.3.25&quot;,    &quot;192.168.3.26&quot;    ],    &quot;names&quot;: [        &#123;            &quot;C&quot;: &quot;CN&quot;,            &quot;L&quot;: &quot;Beijing&quot;,            &quot;ST&quot;: &quot;Beijing&quot;,\t    &quot;O&quot;: &quot;feng&quot;,\t    &quot;OU&quot;: &quot;etcd&quot;        &#125;    ]&#125;\n\n生成etcd使用的证书\n12cd /root/etcd/cfssl gencert -ca=ssl/ca.pem -ca-key=ssl/ca-key.pem -config=ca-config.json -profile=etcd server-csr.json | cfssljson -bare ssl/server\n\n此时的证书文件如下：\n12345678tree ssl/ssl/|-- ca-key.pem|-- ca.csr|-- ca.pem|-- server-key.pem|-- server.csr`-- server.pem\n\n将证书文件发放到所有设备上\n123for i in k8s-01 k8s-02 k8s-03; do \\    scp ssl/* $i:/opt/etcd/ssl/; \\done\n\n\n\n4.4生成etcd配置文件12345678910111213141516171819202122232425262728293031323334353637383940414243444546cat /opt/etcd/config/etcd.config.yamlname: &#x27;k8s-01&#x27;data-dir: /opt/etcd/datawal-dir: /opt/etcd/data/walsnapshot-count: 5000heartbeat-interval: 100election-timeout: 1000quota-backend-bytes: 0listen-peer-urls: &#x27;https://192.168.3.24:2380&#x27;listen-client-urls: &#x27;https://192.168.3.24:2379,http://127.0.0.1:2379&#x27;max-snapshots: 3max-wals: 5cors:initial-advertise-peer-urls: &#x27;https://192.168.3.24:2380&#x27;advertise-client-urls: &#x27;https://192.168.3.24:2379&#x27;discovery:discovery-fallback: &#x27;proxy&#x27;initial-cluster: &#x27;k8s-01=https://192.168.3.24:2380,k8s-02=https://192.168.3.25:2380,k8s-03=https://192.168.3.26:2380&#x27;initial-cluster-token: &#x27;etcd-cluster&#x27;#init set new, restart again set existinginitial-cluster-state: &#x27;new&#x27;strict-reconfig-check: falseenable-v2: trueenable-pprof: trueproxy: &#x27;off&#x27;proxy-failure-wait: 5000proxy-refresh-interval: 30000proxy-dial-timeout: 1000proxy-write-timeout: 5000proxy-read-timeout: 0client-transport-security:  cert-file: &#x27;/opt/etcd/ssl/server.pem&#x27;  key-file: &#x27;/opt/etcd/ssl/server-key.pem&#x27;  client-cert-auth: true  trusted-ca-file: &#x27;/opt/etcd/ssl/ca.pem&#x27;  auto-tls: truepeer-transport-security:  cert-file: &#x27;/opt/etcd/ssl/server.pem&#x27;  key-file: &#x27;/opt/etcd/ssl/server-key.pem&#x27;  peer-client-cert-auth: true  trusted-ca-file: &#x27;/opt/etcd/ssl/ca.pem&#x27;  auto-tls: truedebug: falselog-package-levels:log-outputs: [default]force-new-cluster: false\n\n其他两个配置同上，修改name 为主机名，将k8s-01的IP改为当前设备的IP\n4.5 配置systemd启动123456789101112131415161718cat /lib/systemd/system/etcd.service[Unit]Description=Etcd ServiceDocumentation=https://coreos.com/etcd/docs/latest/After=network.target[Service]Type=notifyExecStart=/usr/local/bin/etcd \\--config-file=/opt/etcd/config/etcd.config.yamlRestart=on-failureRestartSec=10LimitNOFILE=65536[Install]WantedBy=multi-user.targetAlias=etcd3.service\n\nsystemctl start etcd; systemctl enable etcd\n4.6 启动etcd清除旧数据1rm -rf /opt/etcd/data/*\n\n\n\n启动1systemctl daemon-reload &amp;&amp; systemctl enable etcd &amp;&amp; systemctl start etcd &amp;&amp; systemctl status etcd\n\n\n\n4.7 验证etcd查看集群健康状态：\n123etcdctl endpoint health127.0.0.1:2379 is healthy: successfully committed proposal: took = 5.869908ms\n\n\n\n查看集群成员：\n1234etcdctl member list48a815da8dbb8608, started, k8s-02, https://192.168.3.25:2380, https://192.168.3.25:2379, falsec0b978d1e0738f2e, started, k8s-03, https://192.168.3.26:2380, https://192.168.3.26:2379, falseea085da21158e6dc, started, k8s-01, https://192.168.3.24:2380, https://192.168.3.24:2379, false\n\n写操作：\n12etcdctl put hello worldOK\n\n读操作：\n123etcdctl get hellohelloworld\n\n\n\n命令中加入证书配置\n1234 etcdctl --endpoints=https://192.168.3.24:2379 --cacert=/opt/etcd/ssl/ca.pem --cert=/opt/etcd/ssl/server.pem --key=/opt/etcd/ssl/server-key.pem member list48a815da8dbb8608, started, k8s-02, https://192.168.3.25:2380, https://192.168.3.25:2379, falsec0b978d1e0738f2e, started, k8s-03, https://192.168.3.26:2380, https://192.168.3.26:2379, falseea085da21158e6dc, started, k8s-01, https://192.168.3.24:2380, https://192.168.3.24:2379, false\n\n\n\n5 部署k8s组件5.1 下载二进制包在master节点部署3个服务\n\nkube-apiserver\nkube-controller-manager\nkube-scheduler\n\n下载二进制：传送门\n1234567891011# 创建配置目录mkdir -p /root/k8s/&#123;app,ssl,config,service,bin,kubeconfig&#125;cd /root/k8s# 下载kubernets二进制包，按版本直接修改v1.26.2 -&gt; v1.xx.xwget https://dl.k8s.io/v1.26.2/kubernetes-server-linux-amd64.tar.gz -O app/kubernetes-server.tar.gz# 解压tar -xf app/kubernetes-server.tar.gz  --strip-components=3 -C \\\tbin \\        kubernetes/server/bin/kube&#123;let,ctl,-apiserver,-controller-manager,-scheduler,-proxy&#125;\n\n\n\n5.2生成k8s的ca证书12345678910111213141516171819202122232425262728293031323334353637383940cat ca-config.json&#123;    &quot;signing&quot;: &#123;        &quot;default&quot;: &#123;            &quot;expiry&quot;: &quot;87600h&quot;        &#125;,        &quot;profiles&quot;: &#123;            &quot;peer&quot;: &#123;                &quot;expiry&quot;: &quot;87600h&quot;,                &quot;usages&quot;: [                    &quot;signing&quot;,                    &quot;key encipherment&quot;,                    &quot;server auth&quot;,                    &quot;client auth&quot;                ]            &#125;        &#125;    &#125;&#125;cat ca-csr.json&#123;    &quot;CN&quot;: &quot;kubernetes&quot;,    &quot;key&quot;: &#123;        &quot;algo&quot;: &quot;rsa&quot;,        &quot;size&quot;: 2048    &#125;,    &quot;names&quot;: [        &#123;            &quot;C&quot;: &quot;CN&quot;,            &quot;L&quot;: &quot;Beijing&quot;,            &quot;ST&quot;: &quot;Beijing&quot;,            &quot;O&quot;: &quot;Kubernetes&quot;,            &quot;OU&quot;: &quot;System&quot;        &#125;    ],  &quot;ca&quot;: &#123;    &quot;expiry&quot;: &quot;876000h&quot;  &#125;&#125;\n\ncfssl gencert -initca ca-csr.json | cfssljson -bare ssl/ca\n5.3部署apiserver1234567891011121314151617cat kube-apiserver-csr.json&#123;    &quot;CN&quot;: &quot;kube-apiserver&quot;,    &quot;key&quot;: &#123;        &quot;algo&quot;: &quot;rsa&quot;,        &quot;size&quot;: 2048    &#125;,    &quot;names&quot;: [        &#123;            &quot;C&quot;: &quot;CN&quot;,            &quot;L&quot;: &quot;Beijing&quot;,            &quot;ST&quot;: &quot;Beijing&quot;,            &quot;O&quot;: &quot;Kubernetes&quot;,            &quot;OU&quot;: &quot;System&quot;        &#125;    ]&#125;\n\n123cfssl gencert -ca=ssl/ca.pem -ca-key=ssl/ca-key.pem -config=ca-config.json \\\t-hostname=127.0.0.1,kubernetes,kubernetes.default,kubernetes.default.svc,kubernetes.default.svc.cluster,kubernetes.default.svc.cluster.local,10.96.0.1,192.168.3.24 \\\t-profile=peer kube-apiserver-csr.json | cfssljson -bare ssl/kube-apiserver\n\n\n\n生成CA签名请求文件\n1234567891011121314151617181920cat front-proxy-ca-csr.json&#123;  &quot;CN&quot;: &quot;kubernetes&quot;,  &quot;key&quot;: &#123;     &quot;algo&quot;: &quot;rsa&quot;,     &quot;size&quot;: 2048  &#125;,  &quot;ca&quot;: &#123;    &quot;expiry&quot;: &quot;876000h&quot;  &#125;&#125;cat front-proxy-client-csr.json&#123;  &quot;CN&quot;: &quot;front-proxy-client&quot;,  &quot;key&quot;: &#123;     &quot;algo&quot;: &quot;rsa&quot;,     &quot;size&quot;: 2048  &#125;&#125;\n\n12345cfssl gencert -initca front-proxy-ca-csr.json | cfssljson -bare ssl/front-proxy-cacfssl gencert -ca=ssl/front-proxy-ca.pem -ca-key=ssl/front-proxy-ca-key.pem -config=ca-config.json \\\t-profile=peer front-proxy-client-csr.json | cfssljson -bare ssl/front-proxy-clientopenssl genrsa -out ssl/sa.key 2048openssl rsa -in ssl/sa.key -pubout -out ssl/sa.pub\n\n\n\n分发二进制文件、证书\n12cp bin/kube-apiserver  /usr/local/bin/cp -r ssl/&#123;kube*.pem,ca&#123;,-key&#125;.pem,front-proxy-client*.pem,front-proxy-ca.pem,sa.*&#125; $i:/opt/k8s/ssl/;\n\n\n\n配置systemd文件\n12345678910111213141516171819202122232425262728293031323334353637383940414243444546cat /lib/systemd/system/kube-apiserver.service[Unit]Description=Kubernetes API ServerDocumentation=https://github.com/kubernetes/kubernetesAfter=network.target[Service]ExecStart=/usr/local/bin/kube-apiserver \\--v=2 \\--allow-privileged=true \\--bind-address=192.168.3.24 \\--advertise-address=192.168.3.24 \\--secure-port=6443 \\--service-cluster-ip-range=10.96.0.0/16 --service-node-port-range=30000-32767 \\--etcd-servers=https://192.168.3.24:2379 \\--etcd-cafile=/opt/etcd/ssl/ca.pem \\--etcd-certfile=/opt/etcd/ssl/server.pem \\--etcd-keyfile=/opt/etcd/ssl/server-key.pem \\--client-ca-file=/opt/k8s/ssl/ca.pem \\--tls-cert-file=/opt/k8s/ssl/kube-apiserver.pem \\--tls-private-key-file=/opt/k8s/ssl/kube-apiserver-key.pem \\--kubelet-client-certificate=/opt/k8s/ssl/kube-apiserver.pem \\--kubelet-client-key=/opt/k8s/ssl/kube-apiserver-key.pem \\--service-account-key-file=/opt/k8s/ssl/sa.pub \\--service-account-signing-key-file=/opt/k8s/ssl/sa.key \\--service-account-issuer=https://kubernetes.default.svc.cluster.local \\--kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname \\--enable-admission-plugins=NamespaceLifecycle,LimitRanger,ServiceAccount,DefaultStorageClass,DefaultTolerationSeconds,NodeRestriction,ResourceQuota \\--authorization-mode=Node,RBAC \\--enable-bootstrap-token-auth=true \\--enable-aggregator-routing=true \\--proxy-client-cert-file=/opt/k8s/ssl/front-proxy-client.pem \\--proxy-client-key-file=/opt/k8s/ssl/front-proxy-client-key.pem \\--requestheader-client-ca-file=/opt/k8s/ssl/front-proxy-ca.pem \\--requestheader-allowed-names=front-proxy-client \\--requestheader-group-headers=X-Remote-Group \\--requestheader-extra-headers-prefix=X-Remote-Extra- \\--requestheader-username-headers=X-Remote-User#--token-auth-file=$&#123;K8S_CONF_DIR&#125;/token.csv 这里禁用token文件进行认证Restart=on-failureRestartSec=10sLimitNOFILE=65535[Install]WantedBy=multi-user.target\n\n\n\n启动：\n1234systemctl daemon-reloadsystemctl enable kube-apiserversystemctl restart kube-apiserver --no-blocksystemctl is-active kube-apiserver\n\n\n\n5.4部署kubectl生成kubectl 所需的证书\n123456789101112131415161718192021cd /root/k8scat  kubectl-csr.json&#123;  &quot;CN&quot;: &quot;clusteradmin&quot;,  &quot;key&quot;: &#123;    &quot;algo&quot;: &quot;rsa&quot;,    &quot;size&quot;: 2048  &#125;,  &quot;names&quot;: [    &#123;      &quot;C&quot;: &quot;CN&quot;,      &quot;ST&quot;: &quot;Hubei&quot;,      &quot;L&quot;: &quot;Wuhan&quot;,      &quot;O&quot;: &quot;system:masters&quot;,      &quot;OU&quot;: &quot;Kubernetes-manual&quot;    &#125;  ]&#125;cfssl gencert -ca=ssl/ca.pem -ca-key=ssl/ca-key.pem -config=ca-config.json -profile=peer kubectl-csr.json | cfssljson -bare ssl/kubectl\n\n\n\n生成kubeconfig文件\n123456789101112131415161718192021222324252627282930313233343536373839404142434445464748cat kubeconfig_kubectl_config.shAPISERVER_IP=$1K8S_CERT_DIR=$2PORT=6443KUBE_APISERVER=https://$&#123;APISERVER_IP&#125;:$&#123;PORT&#125;CLUSTER_NAME=kubernetesUSERNAME=clusteradminKUBECONFIG_FILE=kubeconfig/kubectl.kubeconfigCONTEXT_NAME=$&#123;USERNAME&#125;@$&#123;CLUSTER_NAME&#125;CERT_PRFIX=kubectl# 设置集群参数./bin/kubectl config set-cluster $&#123;CLUSTER_NAME&#125; \\    --certificate-authority=$&#123;K8S_CERT_DIR&#125;/ca.pem \\    --embed-certs=true \\    --server=$&#123;KUBE_APISERVER&#125; \\    --kubeconfig=$&#123;KUBECONFIG_FILE&#125;# 设置客户端认证参数./bin/kubectl config set-credentials $&#123;USERNAME&#125; \\\t--client-certificate=$&#123;K8S_CERT_DIR&#125;/$&#123;CERT_PRFIX&#125;.pem \\\t--client-key=$&#123;K8S_CERT_DIR&#125;/$&#123;CERT_PRFIX&#125;-key.pem \\\t--embed-certs=true \\\t--kubeconfig=$&#123;KUBECONFIG_FILE&#125;# 设置context---将用户和集群关联起来./bin/kubectl config set-context $&#123;CONTEXT_NAME&#125; \\    --cluster=$&#123;CLUSTER_NAME&#125; \\    --user=$&#123;USERNAME&#125; \\    --kubeconfig=$&#123;KUBECONFIG_FILE&#125;# 设置默认contexts./bin/kubectl config use-context $&#123;CONTEXT_NAME&#125; \\    --kubeconfig=$&#123;KUBECONFIG_FILE&#125;#-------执行命令bash -x kubeconfig_kubectl_config.sh $192.168.3.24 ssl#分发kubeconfig文件mkdir -p $HOME/.kube/cp bin/kubectl /usr/local/bin/cp kubeconfig/kubectl.kubeconfig $HOME/.kube/config#kubectl命令补全功能source &lt;(kubectl completion bash)echo &quot;source &lt;(kubectl completion bash)&quot; &gt;&gt; ~/.bashrc\n\n\n\n查看集群状态\n12345678910111213141516kubectl cluster-info# Kubernetes control plane is running at https://172.15.110.188:6443## To further debug and diagnose cluster problems, use &#x27;kubectl cluster-info dump&#x27;.kubectl get componentstatus# Warning: v1 ComponentStatus is deprecated in v1.19+# NAME                 STATUS      MESSAGE                                                                                        # ERROR# scheduler            Unhealthy   Get &quot;https://127.0.0.1:10259/healthz&quot;: dial tcp 127.0.0.1:10259: connect: connection refused# controller-manager   Unhealthy   Get &quot;https://127.0.0.1:10257/healthz&quot;: dial tcp 127.0.0.1:10257: connect: connection refused# etcd-0               Healthy     &#123;&quot;health&quot;:&quot;true&quot;,&quot;reason&quot;:&quot;&quot;&#125;kubectl get all -A# NAMESPACE   NAME                 TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE# default     service/kubernetes   ClusterIP   10.96.0.1    &lt;none&gt;        443/TCP   17m\n\n\n\n5.5部署controller-manager生成controller-manager所需证书\n1234567891011121314151617181920212223cat kube-controller-manager-csr.json&#123;  &quot;CN&quot;: &quot;system:kube-controller-manager&quot;,  &quot;key&quot;: &#123;    &quot;algo&quot;: &quot;rsa&quot;,    &quot;size&quot;: 2048  &#125;,  &quot;names&quot;: [    &#123;      &quot;C&quot;: &quot;CN&quot;,      &quot;ST&quot;: &quot;Beijing&quot;,      &quot;L&quot;: &quot;Beijing&quot;,      &quot;O&quot;: &quot;system:kube-controller-manager&quot;,      &quot;OU&quot;: &quot;Kubernetes-manual&quot;    &#125;  ]&#125;cfssl gencert -ca=ssl/ca.pem -ca-key=ssl/ca-key.pem \\-config=ca-config.json \\-hostname=127.0.0.1,192.168.3.24 \\-profile=peer kube-controller-manager-csr.json | cfssljson -bare ssl/kube-controller-manager\n\n\n\n\n\n123456789101112131415161718192021222324252627282930313233343536373839404142cat kubeconfig_kube-controller-manager.sh#!/bin/bashAPISERVER_IP=$1K8S_CERT_DIR=$2PORT=6443KUBE_APISERVER=https://$&#123;APISERVER_IP&#125;:$&#123;PORT&#125;KUBECONFIG_FILE=kubeconfig/kube-controller-manager.kubeconfigCLUSTER_NAME=kubernetesUSERNAME=system:kube-controller-managerCONTEXT_NAME=$&#123;USERNAME&#125;@$&#123;CLUSTER_NAME&#125;CERT_PRFIX=kube-controller-manager# 设置集群参数./bin/kubectl config set-cluster $&#123;CLUSTER_NAME&#125; \\    --certificate-authority=$&#123;K8S_CERT_DIR&#125;/ca.pem \\    --embed-certs=true \\    --server=$&#123;KUBE_APISERVER&#125; \\    --kubeconfig=$&#123;KUBECONFIG_FILE&#125;# 设置用户认证参数./bin/kubectl config set-credentials $&#123;USERNAME&#125; \\\t--client-certificate=$&#123;K8S_CERT_DIR&#125;/$&#123;CERT_PRFIX&#125;.pem \\\t--client-key=$&#123;K8S_CERT_DIR&#125;/$&#123;CERT_PRFIX&#125;-key.pem \\\t--embed-certs=true \\\t--kubeconfig=$&#123;KUBECONFIG_FILE&#125;# 设置context---将用户和集群关联起来./bin/kubectl config set-context $&#123;CONTEXT_NAME&#125; \\    --cluster=$&#123;CLUSTER_NAME&#125; \\    --user=$&#123;USERNAME&#125; \\    --kubeconfig=$&#123;KUBECONFIG_FILE&#125;# 设置默认context./bin/kubectl config use-context $&#123;CONTEXT_NAME&#125; \\    --kubeconfig=$&#123;KUBECONFIG_FILE&#125;#----------执行命令bash -x kubeconfig_kube-controller-manager.sh 192.168.3.24 sslmkdir -p /opt/k8s/&#123;ssl,configcp bin/kube-controller-manager  /usr/local/bin/cp ssl/kube-controller*.pem $i:/opt/k8s/ssl/cp kubeconfig/kube-controller-manager.kubeconfig /opt/k8s/config/\n\n\n\nsystemd配置文件&amp;启动\n123456789101112131415161718192021222324252627282930313233343536373839 cat /lib/systemd/system/kube-controller-manager.service[Unit]Description=Kubernetes Controller ManagerDocumentation=https://github.com/kubernetes/kubernetesAfter=network.target[Service]ExecStart=/usr/local/bin/kube-controller-manager \\--v=2 \\--bind-address=127.0.0.1 \\--root-ca-file=/opt/k8s/ssl/ca.pem \\--cluster-signing-cert-file=/opt/k8s/ssl/ca.pem \\--cluster-signing-key-file=/opt/k8s/ssl/ca-key.pem \\--service-account-private-key-file=/opt/k8s/ssl/sa.key \\--tls-cert-file=/opt/k8s/ssl/kube-controller-manager.pem \\--tls-private-key-file=/opt/k8s/ssl/kube-controller-manager-key.pem \\--kubeconfig=/opt/k8s/config/kube-controller-manager.kubeconfig \\--leader-elect=true \\--use-service-account-credentials=true \\--node-monitor-grace-period=40s \\--node-monitor-period=5s \\--controllers=*,bootstrapsigner,tokencleaner \\--allocate-node-cidrs=true \\--cluster-cidr=172.16.0.0/16 \\--requestheader-client-ca-file=/opt/k8s/ssl/front-proxy-ca.pem \\--node-cidr-mask-size=24Restart=alwaysRestartSec=10s[Install]WantedBy=multi-user.target#----------执行命令systemctl daemon-reloadsystemctl enable kube-controller-managersystemctl restart kube-controller-manager --no-blocksystemctl is-active kube-controller-manager\n\n验证：\n12ss -tlp | grep kube-controller# LISTEN 0      16384       127.0.0.1:10257             0.0.0.0:*    users:((&quot;kube-controller&quot;,pid=2864,fd=7))\n\n\n\n5.6部署kube-scheduler组件生成kube-scheduler所需证书\n1234567891011121314151617181920212223242526272829cat gen_schduler_cert.sh# 生成 kube-scheduler 的证书和私钥SCHEDULER_IP=$1CSR_NAME_PREFIX=kube-schedulercat &gt; $&#123;CSR_NAME_PREFIX&#125;-csr.json &lt;&lt;EOF1&#123;  &quot;CN&quot;: &quot;system:kube-scheduler&quot;,  &quot;key&quot;: &#123;    &quot;algo&quot;: &quot;rsa&quot;,    &quot;size&quot;: 2048  &#125;,  &quot;names&quot;: [    &#123;      &quot;C&quot;: &quot;CN&quot;,      &quot;ST&quot;: &quot;Beijing&quot;,      &quot;L&quot;: &quot;Beijing&quot;,      &quot;O&quot;: &quot;system:kube-scheduler&quot;,      &quot;OU&quot;: &quot;Kubernetes-manual&quot;    &#125;  ]&#125;EOF1cfssl gencert -ca=ssl/ca.pem -ca-key=ssl/ca-key.pem \\-config=ca-config.json \\-hostname=$&#123;SCHEDULER_IP&#125; \\-profile=peer $&#123;CSR_NAME_PREFIX&#125;-csr.json | cfssljson -bare ssl/$&#123;CSR_NAME_PREFIX&#125;\n\n执行\n12345bash -x gen_schduler_cert.sh 127.0.0.1,192.168.3.24# 在ssl目录下生成# ├── kube-scheduler-key.pem# ├── kube-scheduler.pem\n\n\n\n\n\n生成kubeconfig文件\n1234567891011121314151617181920212223242526272829303132333435cat kubeconfig_kube-scheduler.shAPISERVER_IP=$1K8S_CERT_DIR=$2PORT=6443KUBE_APISERVER=https://$&#123;APISERVER_IP&#125;:$&#123;PORT&#125;KUBECONFIG_FILE=kubeconfig/kube-scheduler.kubeconfigCLUSTER_NAME=kubernetesUSERNAME=system:kube-schedulerCONTEXT_NAME=$&#123;USERNAME&#125;@$&#123;CLUSTER_NAME&#125;CERT_PRFIX=kube-scheduler# 设置集群参数./bin/kubectl config set-cluster $&#123;CLUSTER_NAME&#125; \\    --certificate-authority=$&#123;K8S_CERT_DIR&#125;/ca.pem \\    --embed-certs=true \\    --server=$&#123;KUBE_APISERVER&#125; \\    --kubeconfig=$&#123;KUBECONFIG_FILE&#125;# 设置用户认证参数./bin/kubectl config set-credentials $&#123;USERNAME&#125; \\\t--client-certificate=$&#123;K8S_CERT_DIR&#125;/$&#123;CERT_PRFIX&#125;.pem \\\t--client-key=$&#123;K8S_CERT_DIR&#125;/$&#123;CERT_PRFIX&#125;-key.pem \\\t--embed-certs=true \\\t--kubeconfig=$&#123;KUBECONFIG_FILE&#125;# 设置context---将用户和集群关联起来./bin/kubectl config set-context $&#123;CONTEXT_NAME&#125; \\    --cluster=$&#123;CLUSTER_NAME&#125; \\    --user=$&#123;USERNAME&#125; \\    --kubeconfig=$&#123;KUBECONFIG_FILE&#125;# 设置默认context./bin/kubectl config use-context $&#123;CONTEXT_NAME&#125; \\    --kubeconfig=$&#123;KUBECONFIG_FILE&#125;\n\n\n\n运行：\n1234bash -x kubeconfig_kube-scheduler.sh 192.168.3.24 ssl## 在kubeconfig目录下生成# ├── kube-scheduler.kubeconfig\n\n\n\n\n\n分发二进制文件、证书、kubeconfig文件\n12345mkdir -p /opt/k8s/&#123;ssl,config&#125;cp bin/kube-scheduler /usr/local/bin/cp ssl/kube-scheduler*.pem $i:/opt/k8s/ssl/cp kubeconfig/kube-scheduler.kubeconfig /opt/k8s/config/\n\n\n\nservice文件\n123456789101112131415161718192021222324cat /lib/systemd/system/kube-scheduler.service[Unit]Description=Kubernetes SchedulerDocumentation=https://github.com/kubernetes/kubernetesAfter=network.target[Service]ExecStart=/usr/local/bin/kube-scheduler \\--v=2 \\--bind-address=127.0.0.1 \\--leader-elect=true \\--kubeconfig=/opt/k8s/config/kube-scheduler.kubeconfigRestart=alwaysRestartSec=10s[Install]WantedBy=multi-user.target#----------执行命令systemctl daemon-reloadsystemctl enable kube-schedulersystemctl restart kube-scheduler --no-blocksystemctl is-active kube-scheduler\n\n\n\n验证集群\n123456kubectl get csWarning: v1 ComponentStatus is deprecated in v1.19+NAME                 STATUS    MESSAGE   ERRORcontroller-manager   Healthy   okscheduler            Healthy   oketcd-0               Healthy   ok\n\n至此master节点三大组件部署完毕.\n6.部署kubelet6.1配置TLS Bootstrap(手动)为什么这个证书不是手动管理？因为k8s的master节点可能是固定的，创建好之后一直就是那几台，但worker节点可能变化比较多，如果添加，删除，故障维护时手动添加会比较麻烦，证书和主机名是有绑定的，而我们的主机名又是不一样的，所以需要有一种机制自动颁发证书请求。\n每个节点的kubelet组件都要使用由apiserver 使用的CA签发的有效证书才能与apiserver通讯；此时如果节点多起来，为每个节点单独签署证书将是一件非常繁琐的事情；TLS bootstrapping功能就是让kubelet先使用一个预定的低权限用户连接到 apiserver，然后向apiserver申请证书，kubelet的证书由apiserver动态签署。\n生成kubeconfig文件：\nbootstrap.kubeconfig文件是一个用来向apiserver申请证书的文件\n1234567891011121314151617181920212223242526272829303132333435363738394041424344454647484950515253545556cat kubeconfig_bootstrap_config.sh#!/bin/bashAPISERVER_IP=$1K8S_CERT_DIR=$2K8S_CONF_DIR=/opt/k8s/configPORT=6443KUBE_APISERVER=https://$&#123;APISERVER_IP&#125;:$&#123;PORT&#125;KUBECONFIG_FILE=kubeconfig/bootstrap.kubeconfigCLUSTER_NAME=kubernetes# 生成bootstrap的tokenTOKEN_ID=$(openssl rand -hex 3)TOKEN_SECRET=$(openssl rand -hex 8)BOOTSTRAP_TOKEN=$&#123;TOKEN_ID&#125;.$&#123;TOKEN_SECRET&#125;USERNAME=system:bootstrap:$&#123;TOKEN_ID&#125;CONTEXT_NAME=$&#123;USERNAME&#125;@$&#123;CLUSTER_NAME&#125;# 创建bootstrap.kubeconfig# 设置集群参数./bin/kubectl config set-cluster $&#123;CLUSTER_NAME&#125; \\--certificate-authority=$&#123;K8S_CERT_DIR&#125;/ca.pem \\--embed-certs=true \\--server=$&#123;KUBE_APISERVER&#125; \\--kubeconfig=$&#123;KUBECONFIG_FILE&#125;# 设置客户端认证参数，kubelet 使用bootstrap token认证./bin/kubectl config set-credentials $&#123;USERNAME&#125; \\--token=$&#123;BOOTSTRAP_TOKEN&#125; \\--kubeconfig=$&#123;KUBECONFIG_FILE&#125;# 设置上下文参数./bin/kubectl config set-context $&#123;CONTEXT_NAME&#125;  \\--cluster=kubernetes \\--user=$&#123;USERNAME&#125; \\--kubeconfig=$&#123;KUBECONFIG_FILE&#125;# 使用上下文参数生成 bootstrap.kubeconfig 文件./bin/kubectl config use-context $&#123;CONTEXT_NAME&#125; --kubeconfig=$&#123;KUBECONFIG_FILE&#125;# 创建boostrap token secretcat &gt; config/bootstrap-token-secret.yaml &lt;&lt;EOF1apiVersion: v1kind: Secretmetadata:  name: bootstrap-token-$&#123;TOKEN_ID&#125;  namespace: kube-systemtype: bootstrap.kubernetes.io/tokenstringData:  token-id: $&#123;TOKEN_ID&#125;  token-secret: $&#123;TOKEN_SECRET&#125;  usage-bootstrap-authentication: &quot;true&quot;  usage-bootstrap-signing: &quot;true&quot;  auth-extra-groups: system:bootstrappers:default-node-token,system:bootstrappers:worker,system:bootstrappers:ingressEOF1\n\n执行命令\n12345678bash -x kubeconfig_bootstrap_config.sh 192.168.3.24 ssl#导入bootstrap-token-secretkubectl apply -f config/bootstrap-token-secret.yaml#查看bootstrap-tokenkubectl get secret -nkube-system#NAME                     TYPE                            DATA   AGE#bootstrap-token-cb7059   bootstrap.kubernetes.io/token   5      5h44m\n\n\n\n生成kubelet配置文件\n12345678910111213141516171819202122232425262728293031323334353637383940414243444546474849505152535455565758596061626364656667686970717273747576777879808182cat kubelet_config.sh cat kubelet_config.sh#!/bin/bashK8S_CONF_DIR=/opt/k8s/configK8S_CERT_DIR=/opt/k8s/sslCLUSTER_DNS=10.96.0.10# 生成kubelet参数文件cat &gt; config/kubelet.conf &lt;&lt;EOF1KUBELET_OPTS=&quot;--v=4 \\\\--container-runtime-endpoint=unix:///run/containerd/containerd.sock \\\\--runtime-cgroups=/systemd/system.slice \\\\--kubeconfig=$&#123;K8S_CONF_DIR&#125;/kubelet.kubeconfig \\\\--bootstrap-kubeconfig=$&#123;K8S_CONF_DIR&#125;/bootstrap.kubeconfig \\\\--config=$&#123;K8S_CONF_DIR&#125;/kubelet.yaml \\\\--cert-dir=$&#123;K8S_CERT_DIR&#125; \\\\--node-labels=node.kubernetes.io/node=&quot;EOF1# 生成kubelet配置yaml文件cat &gt; config/kubelet.yaml &lt;&lt;EOF2kind: KubeletConfigurationapiVersion: kubelet.config.k8s.io/v1beta1address: 0.0.0.0port: 10250readOnlyPort: 10255authentication:  anonymous:    enabled: false  webhook:    cacheTTL: 2m0s    enabled: true  x509:    clientCAFile: $&#123;K8S_CERT_DIR&#125;/ca.pemauthorization:  mode: Webhook  webhook:    cacheAuthorizedTTL: 5m0s    cacheUnauthorizedTTL: 30sruntimeRequestTimeout: 15mcgroupDriver: systemdcgroupsPerQOS: trueclusterDNS:- $&#123;CLUSTER_DNS&#125;clusterDomain: cluster.localEOF2# 生成kubelet.service服务启动文件cat &gt; service/kubelet.service &lt;&lt;EOF3[Unit]Description=Kubernetes KubeletAfter=containerd.serviceRequires=containerd.service[Service]ExecStartPre=-/bin/mkdir -p /sys/fs/cgroup/hugetlb/systemd/system.sliceExecStartPre=-/bin/mkdir -p /sys/fs/cgroup/blkio/systemd/system.sliceExecStartPre=-/bin/mkdir -p /sys/fs/cgroup/cpuset/systemd/system.sliceExecStartPre=-/bin/mkdir -p /sys/fs/cgroup/devices/systemd/system.sliceExecStartPre=-/bin/mkdir -p /sys/fs/cgroup/net_cls,net_prio/systemd/system.sliceExecStartPre=-/bin/mkdir -p /sys/fs/cgroup/perf_event/systemd/system.sliceExecStartPre=-/bin/mkdir -p /sys/fs/cgroup/cpu,cpuacct/systemd/system.sliceExecStartPre=-/bin/mkdir -p /sys/fs/cgroup/freezer/systemd/system.sliceExecStartPre=-/bin/mkdir -p /sys/fs/cgroup/memory/systemd/system.sliceExecStartPre=-/bin/mkdir -p /sys/fs/cgroup/pids/systemd/system.sliceExecStartPre=-/bin/mkdir -p /sys/fs/cgroup/systemd/systemd/system.sliceLimitNOFILE=655350LimitNPROC=655350LimitCORE=infinityLimitMEMLOCK=infinity# 在centos系统上需要配置CPUAccounting和MemoryAccountingCPUAccounting=trueMemoryAccounting=trueEnvironmentFile=$&#123;K8S_CONF_DIR&#125;/kubelet.confExecStart=/usr/local/bin/kubelet \\$KUBELET_OPTSRestart=on-failureKillMode=process[Install]WantedBy=multi-user.targetEOF3\n\n\n\n执行\n12345678bash -x kubelet_config.sh#分发二进制文件、配置文件、证书、kuconfig文件及service文件mkdir -p /opt/k8s/&#123;config,ssl,manifests&#125;cp bin/kubelet $i:/usr/local/bin/cp config/kubelet.&#123;conf,yaml&#125; $i:/opt/k8s/config/cp kubeconfig/bootstrap.kubeconfig $i:/opt/k8s/config/cp ssl/ca.pem $i:/opt/k8s/sslcp service/kubelet.service $i:/usr/lib/systemd/system/\n\n\n\n使用systemctl status kubelet会发现kubelet启动失败，进一步使用journalctl -xe -u kubelet.service --no-pager | less会发现如下错误，提示User &quot;system:bootstrap:a0da46&quot;不能创建资源certificatesigningrequests\n在默认情况下，kubelet 通过 bootstrap.kubeconfig 中的预设用户Token声明了自己的身份，然后创建 CSR 请求；但是这个用户默认没有任何权限的，包括创建 CSR 请求；所以需要授权如下命令创建一个 ClusterRoleBinding，将预设用户 kubelet-bootstrap 与内置的 ClusterRole system:node-bootstrapper 绑定到一起，使其能够发起 CSR 请求\n在使用 Bootstrap Token 进行引导时，Kubelet 组件使用 Token 发起的请求其用户名为system:bootstrap:&lt;tokenid&gt;，所属组为system:bootstrappers，然后创建CSR请求，但是此用户没有任何权限；在k8s中已经创建了一个clusterrole（system:node-bootstrapper），此集群角色具有发起CSR请求的权限，我们需要创建一个clusterrolebinding将clusterrole和此token的用户名或者所属组进行关联，然后system:bootstrap:&lt;tokenid&gt;拥有了system:node-bootstrapper的权限，这样任何用户拿着这个token连接apiserver都具有system:node-bootstrapper的权限\n这里创建一个clusterrolebinding（create-csrs-for-bootstrapping）将clusterrole和group进行绑定\n1234567kubectl create clusterrolebinding create-csrs-for-bootstrapping \\        --clusterrole=system:node-bootstrapper \\        --group=system:bootstrappers:default-node-token kubectl get clusterrolebinding create-csrs-for-bootstrapping# NAME                            ROLE                                   AGE# create-csrs-for-bootstrapping   ClusterRole/system:node-bootstrapper   22s\n\n\n\n\n\n手动签发kubelt证书\n任何人使用token进行认证通过后进入授权阶段，api-server从该token中获取namespace和name信息,并将该token特殊对待，授予anyone bootstrap权利，将该匿名用户划分到system:bootstraps组，至此anyone使用该token认证的时候都具有了system:node-bootstrapper的权利\n1234567891011121314151617181920systemctl restart kubelet.service# 查看节点kubelet启动证书请求状态，这时已经是Pending状态kubectl get csr# NAME                                                   AGE   SIGNERNAME                                    REQUESTOR                 REQUESTEDDURATION   CONDITION# node-csr-Rd0Mxw-GPHt5p66qLCnLWUxj0g7uWUDtiNS0UjVafb8   4s    kubernetes.io/kube-apiserver-client-kubelet   system:bootstrap:a0da46   &lt;none&gt;              Pending# 手动签发kubelet的证书kubectl certificate approve $(kubectl get csr | grep node | awk &#x27;&#123;print $1&#125;&#x27;)# certificatesigningrequest.certificates.k8s.io/node-csr-Rd0Mxw-GPHt5p66qLCnLWUxj0g7uWUDtiNS0UjVafb8 approved# 再次查看证书请求状态，已经变成了Approved,Issuedkubectl get csr# NAME                                                   AGE     SIGNERNAME                                    REQUESTOR                 REQUESTEDDURATION   CONDITION# node-csr-Rd0Mxw-GPHt5p66qLCnLWUxj0g7uWUDtiNS0UjVafb8   2m48s   kubernetes.io/kube-apiserver-client-kubelet   system:bootstrap:a0da46   &lt;none&gt;              Approved,Issued# 查看node，由于网络插件还未安装，状态显示为NotReadykubectl get nodes# NAME   STATUS     ROLES    AGE   VERSION# k8s-01    NotReady   &lt;none&gt;   79s   v1.32.0-rc.2\n\n\n\n6.2自动批准，自动续期，自动颁发要是有很多worker节点要安装kubelet，手工去approve证书请求会很繁琐，增加工作量，就有了自动批准，自动续期，自动颁发的方法。\nkubelet所发起的CSR请求是由controller manager签署的；如果想要是实现自动续期，就需要让controller manager能够在 kubelet发起证书请求的时候自动帮助其签署证书；那么controller manager不可能对所有的CSR证书申请都自动签署，这时候就需要配置RBAC规则，保证controller manager只对kubelet发起的特定CSR请求自动批准即可；在TLS bootstrapping官方文档中，CSR有三种请求类型:\n\nnodeclient: kubelet以O&#x3D;system:nodes和CN&#x3D;system:node:(node name)形式发起的CSR请求\nselfnodeclient: kubelet client renew自己的证书发起的CSR请求(与上一个证书就有相同的O和CN)\nselfnodeserver: kubelet server renew 自己的证书发起的CSR请求\n\n通俗点讲就是: nodeclient类型的CSR仅在第一次启动时会产生，selfnodeclient类型的CSR请求实际上就是kubelet renew自己作为client跟 apiserver通讯时使用的证书产生的，selfnodeserver类型的CSR请求则是kubelet首次申请或后续renew自己的10250 api端口证书时产生的，以下为3中CSR请求分别创建3种对应的Clusterrole\n创建3个clusterrolebinding\n\n自动批准kubelet首次用于与 apiserver 通讯证书的 CSR 请求(nodeclient)\n自动批准kubelet首次用于10250端口鉴权的CSR请求(实际上这个请求走的也是 selfnodeserver 类型 CSR)\n自动批准kubelet后续renew用于与apiserver通讯证书的 CSR 请求(selfnodeclient)\n自动批准kubelet后续renew用于10250端口鉴权的 CSR 请求(selfnodeserver)\n\n12345678# 自动批准 kubelet 的首次 CSR 请求(用于与 apiserver 通讯的证书)kubectl create clusterrolebinding node-client-auto-approve-csr --clusterrole=system:certificates.k8s.io:certificatesigningrequests:nodeclient --group=system:bootstrappers# 自动批准 kubelet 后续 renew 用于与 apiserver 通讯证书的 CSR 请求kubectl create clusterrolebinding node-client-auto-renew-crt --clusterrole=system:certificates.k8s.io:certificatesigningrequests:selfnodeclient --group=system:nodes# 自动批准 kubelet 发起的用于 10250 端口鉴权证书的 CSR 请求(包括后续 renew)kubectl create clusterrolebinding node-server-auto-renew-crt --clusterrole=system:certificates.k8s.io:certificatesigningrequests:selfnodeserver --group=system:nodes\n\n\n\n\n\n分发二进制文件、配置文件、证书、kuconfig文件及service文件\n12345678910111213141516# 分发到k8s-02和k8s-03for i in k8s-02 k8s-03; do \\ssh $i &quot;mkdir -p /opt/k8s/&#123;config,ssl,manifests&#125;&quot;; \\scp bin/kubelet $i:/usr/local/bin/; \\scp config/kubelet.&#123;conf,yaml&#125; $i:/opt/k8s/config/; \\scp kubeconfig/bootstrap.kubeconfig $i:/opt/k8s/config/; \\scp ssl/ca.pem $i:/opt/k8s/ssl; \\scp service/kubelet.service $i:/usr/lib/systemd/system/; \\donefor i in k8s-02 k8s-03; do \\ssh $i &quot;systemctl daemon-reload&quot;; \\ssh $i &quot;systemctl enable kubelet&quot;; \\ssh $i &quot;systemctl restart kubelet --no-block&quot;; \\ssh $i &quot;systemctl is-active kubelet&quot;; \\done\n\n查看csr和集群信息\n1234567891011121314151617181920212223242526272829303132# 再次查看所有节点已经自己申请证书并自动批准，颁发kubectl get csr# NAME                                                   AGE   SIGNERNAME                                    REQUESTOR                 REQUESTEDDURATION   CONDITION# node-csr-Rd0Mxw-GPHt5p66qLCnLWUxj0g7uWUDtiNS0UjVafb8   10m   kubernetes.io/kube-apiserver-client-kubelet   system:bootstrap:a0da46   &lt;none&gt;              Approved,Issued# node-csr-ZOEo99khFzaWWKmYTHn8DctSmnvyngGG-DLr7q-wIZo   13s   kubernetes.io/kube-apiserver-client-kubelet   system:bootstrap:a0da46   &lt;none&gt;              Approved,Issued# node-csr-fO2nU2tQC9RjwRyvZ6aA2338yWzgA43UZr0ka79rO8A   11s   kubernetes.io/kube-apiserver-client-kubelet   system:bootstrap:a0da46   &lt;none&gt;              Approved,Issuedkubectl get nodes# NAME   STATUS     ROLES    AGE     VERSION# m01    NotReady   &lt;none&gt;   9m29s   v1.26.2# w01    NotReady   &lt;none&gt;   77s     v1.26.2# w02    NotReady   &lt;none&gt;   75s     v1.26.2# 修改node的role标签kubectl label nodes m01 node-role.kubernetes.io/master=# node/m01 labeledkubectl label nodes w01 node-role.kubernetes.io/worker=# node/w01 labeledkubectl label nodes w02 node-role.kubernetes.io/worker=# node/w02 labeledkubectl get nodes# NAME   STATUS     ROLES    AGE    VERSION# m01    NotReady   master   10m    v1.26.2# w01    NotReady   worker   2m1s   v1.26.2# w02    NotReady   worker   119s   v1.26.2\n\n\n\n\n\n6.3部署kube-proxykube-proxy运行在所有worker节点上，它监听apiserver中service和endpoint的变化情况，创建路由规则提供服务IP和负载均衡功能。\n生成证书kube-proxy提取证书中的CN作为客户端的用户名，即system:kube-proxy。 kube-apiserver预定义的 RBAC使用的ClusterRoleBindings system:node-proxier将用户system:kube-proxy与ClusterRole system:node-proxier绑定，该Role授予节点调用kube-apiserver proxy相关api的权限；\n1234567891011kubectl describe clusterrolebinding/system:node-proxierName:         system:node-proxierLabels:       kubernetes.io/bootstrapping=rbac-defaultsAnnotations:  rbac.authorization.kubernetes.io/autoupdate: trueRole:  Kind:  ClusterRole  Name:  system:node-proxierSubjects:  Kind  Name               Namespace  ----  ----               ---------  User  system:kube-proxy\n\n\n\n生成脚本gen_kube_proxy_cert.sh\n1234567891011121314151617181920212223242526272829303132333435cat &lt;&lt;&#x27;EOF&#x27;&gt; kube-proxy_kubeconfig.sh#!/bin/bashK8S_CONF_DIR=/opt/k8s/configAPISERVER_IP=$1K8S_CERT_DIR=$2PORT=6443CLUSTER_NAME=kubernetesKUBE_APISERVER=https://$&#123;APISERVER_IP&#125;:$&#123;PORT&#125;KUBECONFIG_FILE=kubeconfig/kube-proxy.kubeconfigUSERNAME=system:kube-proxyCONTEXT_NAME=$&#123;USERNAME&#125;@$&#123;CLUSTER_NAME&#125;CERT_PRFIX=kube-proxy./bin/kubectl config set-cluster $&#123;CLUSTER_NAME&#125; \\    --certificate-authority=$&#123;K8S_CERT_DIR&#125;/ca.pem \\    --embed-certs=true \\    --server=$&#123;KUBE_APISERVER&#125; \\    --kubeconfig=$&#123;KUBECONFIG_FILE&#125;./bin/kubectl config set-credentials $&#123;USERNAME&#125; \\    --client-certificate=$&#123;K8S_CERT_DIR&#125;/$&#123;CERT_PRFIX&#125;.pem \\    --client-key=$&#123;K8S_CERT_DIR&#125;/$&#123;CERT_PRFIX&#125;-key.pem \\    --embed-certs=true \\    --kubeconfig=$&#123;KUBECONFIG_FILE&#125;./bin/kubectl config set-context $&#123;CONTEXT_NAME&#125; \\    --cluster=$&#123;CLUSTER_NAME&#125; \\    --user=$&#123;USERNAME&#125; \\    --kubeconfig=$&#123;KUBECONFIG_FILE&#125;./bin/kubectl config use-context $&#123;CONTEXT_NAME&#125; \\    --kubeconfig=$&#123;KUBECONFIG_FILE&#125;EOF\n\n执行\n1bash -x kube-proxy_kubeconfig.sh 192.68.3.24 ssl\n\n\n\n生成配置文件和service文件，生成脚本kube-proxy_config.sh\n1234567891011121314151617181920212223242526272829303132333435363738394041424344454647484950515253545556575859606162636465# clusterCIDR: 172.16.0.0/16\t这个是pod网段cat &lt;&lt;&#x27;EOF&#x27;&gt; kube-proxy_config.shK8S_CONF_DIR=/opt/k8s/configCLUSER_CIDR=172.16.0.0/16## 创建 kube-proxy 启动参数配置文件cat &gt; config/kube-proxy.yaml &lt;&lt;EOF1apiVersion: kubeproxy.config.k8s.io/v1alpha1bindAddress: 0.0.0.0clientConnection:  acceptContentTypes: &quot;&quot;  burst: 10  contentType: application/vnd.kubernetes.protobuf  kubeconfig: $&#123;K8S_CONF_DIR&#125;/kube-proxy.kubeconfig  qps: 5clusterCIDR: $&#123;CLUSER_CIDR&#125; configSyncPeriod: 15m0sconntrack:  max: null  maxPerCore: 32768  min: 131072  tcpCloseWaitTimeout: 1h0m0s  tcpEstablishedTimeout: 24h0m0senableProfiling: falsehealthzBindAddress: 0.0.0.0:10256hostnameOverride: &quot;&quot;iptables:  masqueradeAll: false  masqueradeBit: 14  minSyncPeriod: 0s  syncPeriod: 30sipvs:  masqueradeAll: true  minSyncPeriod: 5s  scheduler: &quot;rr&quot;  syncPeriod: 30skind: KubeProxyConfigurationmetricsBindAddress: 127.0.0.1:10249mode: &quot;ipvs&quot;nodePortAddresses: nulloomScoreAdj: -999portRange: &quot;&quot;udpIdleTimeout: 250msEOF1#----------------------# 创建 kube-proxy.service 服务管理文件cat &gt; service/kube-proxy.service &lt;&lt;EOF2[Unit]Description=Kubernetes ProxyAfter=network.target[Service]ExecStart=/usr/local/bin/kube-proxy \\\\    --config=$&#123;K8S_CONF_DIR&#125;/kube-proxy.yaml \\\\    --v=2    Restart=alwaysRestartSec=10s[Install]WantedBy=multi-user.targetEOF2EOF\n\n执行\n1234567bash -x kube-proxy_config.sh# 在config目录下生成# ├── kube-proxy.yaml# 在service目录下生成# ├── kube-proxy.service\n\n\n\n分发二进制文件、配置文件、kubeconfig文件及service文件\n1234567891011121314for i in k8s-01 k8s-02 k8s-03; do \\scp bin/kube-proxy $i:/usr/local/bin/; \\scp config/kube-proxy.yaml $i:/opt/k8s/config/; \\scp kubeconfig/kube-proxy.kubeconfig $i:/opt/k8s/config/; \\scp service/kube-proxy.service $i:/usr/lib/systemd/system/; \\scp ssl/front-proxy-ca.pem $i:/opt/k8s/ssl/; \\donefor i in k8s-01 k8s-02 k8s-03; do \\ssh $i &quot;systemctl daemon-reload&quot;; \\ssh $i &quot;systemctl enable kube-proxy&quot;; \\ssh $i &quot;systemctl restart kube-proxy --no-block&quot;; \\ssh $i &quot;systemctl is-active kube-proxy&quot;; \\done\n\n\n\n\n\n6.4部署calicocalico中，pod的网卡的另一端并不是接入虚拟网桥，而是直接接入了到内核中，所以看不到另外一端\n组件\n\nFelix：运行于各个节点的守护进程，主要完成接口管理、路由规划、ACL规划、路由和ACL的报文状态\n\nBIRD：vRouter的实现，默认是bgp客户端，在运行Felix的节点必须要运行BIRD；同时又是路由反射器\nBGP协议的守护进程：既可以是路由反射器又是bgp客户端\n\n\n下载calico.yaml并修改配置\n123456789101112131415161718192021222324252627282930313233343536373839mkdir -p /root/addonscd /root/addons/#安装 Tigera Calico 操作员和自定义资源定义。kubectl create -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.1/manifests/tigera-operator.yaml#通过创建必要的自定义资源来安装 Calicowget https://raw.githubusercontent.com/projectcalico/calico/v3.29.1/manifests/custom-resources.yamlcat custom-resources.yaml# This section includes base Calico installation configuration.# For more information, see: https://docs.tigera.io/calico/latest/reference/installation/api#operator.tigera.io/v1.InstallationapiVersion: operator.tigera.io/v1kind: Installationmetadata:  name: defaultspec:  # Configures Calico networking.  calicoNetwork:    ipPools:    - name: default-ipv4-ippool      blockSize: 26      cidr: 172.16.0.0/16      encapsulation: VXLANCrossSubnet      natOutgoing: Enabled      nodeSelector: all()---# This section configures the Calico API server.# For more information, see: https://docs.tigera.io/calico/latest/reference/installation/api#operator.tigera.io/v1.APIServerapiVersion: operator.tigera.io/v1kind: APIServermetadata:  name: defaultspec: &#123;&#125;\n\n\n\n7部署addons用于集群内部service的解析，可以让pod把service name解析成service ip，然后通过service的ip地址进行连接到对应的应用，打开传送门，查看coredns的最新版本，目前最新是1.10.0版本。\n生成yaml资源文件，创建脚本文件gen_coredns_config.sh\n123456789101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899100101102103104105106107108109110111112113114115116117118119120121122123124125126127128129130131132133134135136137138139140141142143144145146147148149150151152153154155156157158159160161162163164165166167168169170171172173174175176177178179180181182183184185186187188189190191192193194195196197198199200201202203204205206207208209210211212213214215216217218219220221222223224225226227228229cat gen_coredns_config.shDNS_DOMAIN=cluster.localIMAGE_REGISTRY=registry.cn-hangzhou.aliyuncs.com/google_containers/coredns:v1.9.3DNS_MEMORY_LIMIT=170MiDNS_SERVER_IP=10.96.0.10cat &gt; coredns.yaml &lt;&lt;EOF1apiVersion: v1kind: ServiceAccountmetadata:  name: coredns  namespace: kube-system  labels:      kubernetes.io/cluster-service: &quot;true&quot;      addonmanager.kubernetes.io/mode: Reconcile---apiVersion: rbac.authorization.k8s.io/v1kind: ClusterRolemetadata:  labels:    kubernetes.io/bootstrapping: rbac-defaults    addonmanager.kubernetes.io/mode: Reconcile  name: system:corednsrules:- apiGroups:  - &quot;&quot;  resources:  - endpoints  - services  - pods  - namespaces  verbs:  - list  - watch- apiGroups:  - &quot;&quot;  resources:  - nodes  verbs:  - get- apiGroups:  - discovery.k8s.io  resources:  - endpointslices  verbs:  - list  - watch---apiVersion: rbac.authorization.k8s.io/v1kind: ClusterRoleBindingmetadata:  annotations:    rbac.authorization.kubernetes.io/autoupdate: &quot;true&quot;  labels:    kubernetes.io/bootstrapping: rbac-defaults    addonmanager.kubernetes.io/mode: EnsureExists  name: system:corednsroleRef:  apiGroup: rbac.authorization.k8s.io  kind: ClusterRole  name: system:corednssubjects:- kind: ServiceAccount  name: coredns  namespace: kube-system---apiVersion: v1kind: ConfigMapmetadata:  name: coredns  namespace: kube-system  labels:      addonmanager.kubernetes.io/mode: EnsureExistsdata:  Corefile: |    .:53 &#123;        errors        health &#123;            lameduck 5s        &#125;        ready        kubernetes $&#123;DNS_DOMAIN&#125; in-addr.arpa ip6.arpa &#123;            pods insecure            fallthrough in-addr.arpa ip6.arpa            ttl 30        &#125;        prometheus :9153        forward . /etc/resolv.conf &#123;            max_concurrent 1000        &#125;        cache 30        loop        reload        loadbalance    &#125;---apiVersion: apps/v1kind: Deploymentmetadata:  name: coredns  namespace: kube-system  labels:    k8s-app: kube-dns    kubernetes.io/cluster-service: &quot;true&quot;    addonmanager.kubernetes.io/mode: Reconcile    kubernetes.io/name: &quot;CoreDNS&quot;spec:  # replicas: not specified here:  # 1. In order to make Addon Manager do not reconcile this replicas parameter.  # 2. Default is 1.  # 3. Will be tuned in real time if DNS horizontal auto-scaling is turned on.  strategy:    type: RollingUpdate    rollingUpdate:      maxUnavailable: 1  selector:    matchLabels:      k8s-app: kube-dns  template:    metadata:      labels:        k8s-app: kube-dns    spec:      securityContext:        seccompProfile:          type: RuntimeDefault      priorityClassName: system-cluster-critical      serviceAccountName: coredns      affinity:        podAntiAffinity:          preferredDuringSchedulingIgnoredDuringExecution:          - weight: 100            podAffinityTerm:              labelSelector:                matchExpressions:                  - key: k8s-app                    operator: In                    values: [&quot;kube-dns&quot;]              topologyKey: kubernetes.io/hostname      tolerations:        - key: &quot;CriticalAddonsOnly&quot;          operator: &quot;Exists&quot;      nodeSelector:        kubernetes.io/os: linux      containers:      - name: coredns        image: $&#123;IMAGE_REGISTRY&#125;        imagePullPolicy: IfNotPresent        resources:          limits:            memory: $&#123;DNS_MEMORY_LIMIT&#125;          requests:            cpu: 100m            memory: 70Mi        args: [ &quot;-conf&quot;, &quot;/etc/coredns/Corefile&quot; ]        volumeMounts:        - name: config-volume          mountPath: /etc/coredns          readOnly: true        ports:        - containerPort: 53          name: dns          protocol: UDP        - containerPort: 53          name: dns-tcp          protocol: TCP        - containerPort: 9153          name: metrics          protocol: TCP        livenessProbe:          httpGet:            path: /health            port: 8080            scheme: HTTP          initialDelaySeconds: 60          timeoutSeconds: 5          successThreshold: 1          failureThreshold: 5        readinessProbe:          httpGet:            path: /ready            port: 8181            scheme: HTTP        securityContext:          allowPrivilegeEscalation: false          capabilities:            add:            - NET_BIND_SERVICE            drop:            - all          readOnlyRootFilesystem: true      dnsPolicy: Default      volumes:        - name: config-volume          configMap:            name: coredns            items:            - key: Corefile              path: Corefile---apiVersion: v1kind: Servicemetadata:  name: kube-dns  namespace: kube-system  annotations:    prometheus.io/port: &quot;9153&quot;    prometheus.io/scrape: &quot;true&quot;  labels:    k8s-app: kube-dns    kubernetes.io/cluster-service: &quot;true&quot;    addonmanager.kubernetes.io/mode: Reconcile    kubernetes.io/name: &quot;CoreDNS&quot;spec:  selector:    k8s-app: kube-dns  clusterIP: $&#123;DNS_SERVER_IP&#125;  ports:  - name: dns    port: 53    protocol: UDP  - name: dns-tcp    port: 53    protocol: TCP  - name: metrics    port: 9153    protocol: TCPEOF1\n\n\n\n执行脚本\n1234567bash -x gen_coredns_config.shkubectl apply -f coredns.yamlkubectl get pod -ANAMESPACE          NAME                                       READY   STATUS             RESTARTS   AGEkube-system        coredns-c99df6f57-kvx6n                    1/1     Running            0          6h6m\n\n\n\n8 部署metrics-server在k8s中系统资源的采集均使用Metrics-server，可以通过Metrics采集节点和pod的内存，磁盘，CPU和网络使用率。可以传送门下载yaml文件，但是要修改几个参数:\nIMAGE_REGISTRY：在阿里云的容器服务里面查看对应metrics-server镜像的版本\n生成yaml资源文件创建脚本文件gen_metrics-server_config.sh\n123456789101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899100101102103104105106107108109110111112113114115116117118119120121122123124125126127128129130131132133134135136137138139140141142143144145146147148149150151152153154155156157158159160161162163164165166167168169170171172173174175176177178179180181182183184185186187188189190191192193194195196197198199200201202203204205206207208209210211212213214215 cat gen_metrics-server_config.shCERT_PATH=/opt/k8s/sslCLIENT_CA_FILE=$&#123;CERT_PATH&#125;/front-proxy-ca.pemIMAGE_REGISTRY=registry.cn-hangzhou.aliyuncs.com/google_containers/metrics-server:v0.6.1cat &gt; metrics-server.yaml &lt;&lt;EOF1apiVersion: v1kind: ServiceAccountmetadata:  labels:    k8s-app: metrics-server  name: metrics-server  namespace: kube-system---apiVersion: rbac.authorization.k8s.io/v1kind: ClusterRolemetadata:  labels:    k8s-app: metrics-server    rbac.authorization.k8s.io/aggregate-to-admin: &quot;true&quot;    rbac.authorization.k8s.io/aggregate-to-edit: &quot;true&quot;    rbac.authorization.k8s.io/aggregate-to-view: &quot;true&quot;  name: system:aggregated-metrics-readerrules:- apiGroups:  - metrics.k8s.io  resources:  - pods  - nodes  verbs:  - get  - list  - watch---apiVersion: rbac.authorization.k8s.io/v1kind: ClusterRolemetadata:  labels:    k8s-app: metrics-server  name: system:metrics-serverrules:- apiGroups:  - &quot;&quot;  resources:  - nodes/metrics  verbs:  - get- apiGroups:  - &quot;&quot;  resources:  - pods  - nodes  verbs:  - get  - list  - watch---apiVersion: rbac.authorization.k8s.io/v1kind: RoleBindingmetadata:  labels:    k8s-app: metrics-server  name: metrics-server-auth-reader  namespace: kube-systemroleRef:  apiGroup: rbac.authorization.k8s.io  kind: Role  name: extension-apiserver-authentication-readersubjects:- kind: ServiceAccount  name: metrics-server  namespace: kube-system---apiVersion: rbac.authorization.k8s.io/v1kind: ClusterRoleBindingmetadata:  labels:    k8s-app: metrics-server  name: metrics-server:system:auth-delegatorroleRef:  apiGroup: rbac.authorization.k8s.io  kind: ClusterRole  name: system:auth-delegatorsubjects:- kind: ServiceAccount  name: metrics-server  namespace: kube-system---apiVersion: rbac.authorization.k8s.io/v1kind: ClusterRoleBindingmetadata:  labels:    k8s-app: metrics-server  name: system:metrics-serverroleRef:  apiGroup: rbac.authorization.k8s.io  kind: ClusterRole  name: system:metrics-serversubjects:- kind: ServiceAccount  name: metrics-server  namespace: kube-system---apiVersion: v1kind: Servicemetadata:  labels:    k8s-app: metrics-server  name: metrics-server  namespace: kube-systemspec:  ports:  - name: https    port: 443    protocol: TCP    targetPort: https  selector:    k8s-app: metrics-server---apiVersion: apps/v1kind: Deploymentmetadata:  labels:    k8s-app: metrics-server  name: metrics-server  namespace: kube-systemspec:  selector:    matchLabels:      k8s-app: metrics-server  strategy:    rollingUpdate:      maxUnavailable: 0  template:    metadata:      labels:        k8s-app: metrics-server    spec:      containers:      - args:        - --cert-dir=/tmp        - --secure-port=4443        - --kubelet-preferred-address-types=InternalIP,ExternalIP,Hostname        - --kubelet-use-node-status-port        - --metric-resolution=15s        - --kubelet-insecure-tls   # kubectl top nodes        - --requestheader-client-ca-file=$&#123;CLIENT_CA_FILE&#125;   # 聚合CA证书 front-proxy-ca.crt        - --requestheader-username-headers=X-Remote-User        - --requestheader-group-headers=X-Remote-Group        - --requestheader-extra-headers-prefix=X-Remote-Extra-        image: $&#123;IMAGE_REGISTRY&#125;        imagePullPolicy: IfNotPresent        livenessProbe:          failureThreshold: 3          httpGet:            path: /livez            port: https            scheme: HTTPS          periodSeconds: 10        name: metrics-server        ports:        - containerPort: 4443          name: https          protocol: TCP        readinessProbe:          failureThreshold: 3          httpGet:            path: /readyz            port: https            scheme: HTTPS          initialDelaySeconds: 20          periodSeconds: 10        resources:          requests:            cpu: 100m            memory: 200Mi        securityContext:          allowPrivilegeEscalation: false          readOnlyRootFilesystem: true          runAsNonRoot: true          runAsUser: 1000        volumeMounts:        - mountPath: /tmp          name: tmp-dir        - name: ca-ssl          mountPath: $&#123;CERT_PATH&#125;      nodeSelector:        kubernetes.io/os: linux      priorityClassName: system-cluster-critical      serviceAccountName: metrics-server      hostNetwork: true\t   # kubectl top pods      volumes:      - emptyDir: &#123;&#125;        name: tmp-dir      - name: ca-ssl        hostPath:          path: $&#123;CERT_PATH&#125;---apiVersion: apiregistration.k8s.io/v1kind: APIServicemetadata:  labels:    k8s-app: metrics-server  name: v1beta1.metrics.k8s.iospec:  group: metrics.k8s.io  groupPriorityMinimum: 100  insecureSkipTLSVerify: true  service:    name: metrics-server    namespace: kube-system  version: v1beta1  versionPriority: 100EOF1\n\n执行命令\n1234567bash -x gen_metrics-server_config.shkubectl apply -f metrics-server.yamlkubectl get pods -n kube-system#NAME                             READY   STATUS    RESTARTS   AGE#coredns-c99df6f57-kvx6n          1/1     Running   0          6h9m#metrics-server-584554654-bwgwk   1/1     Running   0          6h7m\n\n\n\n\n\n9 部署rancher9.1 安装helm12curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3bash get_helm.sh\n\n\n\n9.2 使用helm安装依赖1234567helm repo add rancher-stable https://releases.rancher.com/server-charts/stablekubectl create namespace cattle-system#安装cert-managerhelm repo add jetstack https://charts.jetstack.iohelm repo updatehelm install cert-manager jetstack/cert-manager --create-namespace --namespace cert-manager --set installCRDs=true\n\n\n\n\n\n9.3安装rancher1helm install rancher rancher-latest/rancher --devel  --namespace cattle-system   --set hostname=rancher.fengzhigu.cloud   --set bootstrapPassword=admin --version 2.10.0\n\n\n\nrancher暂时不支持k8s v1.32.0\n","dateCreated":"2024-12-19T23:07:17+08:00","dateModified":"2024-12-30T22:59:21+08:00","datePublished":"2024-12-19T23:07:17+08:00","description":"此文档是手动安装k8s集群，主要是用来学习k8s组件的使用及配置。","headline":"手动部署k8s","image":["image-1.png","image-2.png"],"mainEntityOfPage":{"@type":"WebPage","@id":"https://1416018124.github.io/2024/12/19/%E6%89%8B%E5%8A%A8%E9%83%A8%E7%BD%B2k8s/"},"publisher":{"@type":"Organization","name":"Jiang Feng","sameAs":["https://github.com/1416018124"]},"url":"https://1416018124.github.io/2024/12/19/%E6%89%8B%E5%8A%A8%E9%83%A8%E7%BD%B2k8s/","keywords":"k8s, 运维","thumbnailUrl":"image-1.png"}</script>
+    <meta name="description" content="此文档是手动安装k8s集群，主要是用来学习k8s组件的使用及配置。">
+<meta property="og:type" content="blog">
 <meta property="og:title" content="手动部署k8s">
 <meta property="og:url" content="https://1416018124.github.io/2024/12/19/%E6%89%8B%E5%8A%A8%E9%83%A8%E7%BD%B2k8s/index.html">
 <meta property="og:site_name" content="Hexo">
@@ -19,83 +27,227 @@
 <meta property="article:tag" content="k8s">
 <meta property="article:tag" content="运维">
 <meta name="twitter:card" content="summary">
-  
-    <link rel="alternate" href="/atom.xml" title="Hexo" type="application/atom+xml">
-  
-  
-    <link rel="shortcut icon" href="/favicon.png">
-  
-  
-  
-<link rel="stylesheet" href="/css/style.css">
-
-  
     
-<link rel="stylesheet" href="/fancybox/jquery.fancybox.min.css">
+    
+        
+    
+    
+    
+        <meta property="og:image" content="https://1416018124.github.io/2024/12/19/%E6%89%8B%E5%8A%A8%E9%83%A8%E7%BD%B2k8s/image-1.png"/>
+        <meta class="swiftype" name="image" data-type="enum" content="https://1416018124.github.io/2024/12/19/%E6%89%8B%E5%8A%A8%E9%83%A8%E7%BD%B2k8s/image-1.png"/>
+    
+    
+        <meta property="og:image" content="https://1416018124.github.io/2024/12/19/%E6%89%8B%E5%8A%A8%E9%83%A8%E7%BD%B2k8s/image-2.png"/>
+        <meta class="swiftype" name="image" data-type="enum" content="https://1416018124.github.io/2024/12/19/%E6%89%8B%E5%8A%A8%E9%83%A8%E7%BD%B2k8s/image-2.png"/>
+    
+    
+        
+            <meta property="og:image" content="https://1416018124.github.io/2024/12/19/%E6%89%8B%E5%8A%A8%E9%83%A8%E7%BD%B2k8s/image-3.jpg"/>
+            <meta class="swiftype" name="image" data-type="enum" content="https://1416018124.github.io/2024/12/19/%E6%89%8B%E5%8A%A8%E9%83%A8%E7%BD%B2k8s/image-3.jpg"/>
+        
+            <meta property="og:image" content="https://1416018124.github.io/2024/12/19/%E6%89%8B%E5%8A%A8%E9%83%A8%E7%BD%B2k8s/image-4.png"/>
+            <meta class="swiftype" name="image" data-type="enum" content="https://1416018124.github.io/2024/12/19/%E6%89%8B%E5%8A%A8%E9%83%A8%E7%BD%B2k8s/image-4.png"/>
+        
+            <meta property="og:image" content="http://i.imgur.com/o9r19kD.jpg"/>
+            <meta class="swiftype" name="image" data-type="enum" content="http://i.imgur.com/o9r19kD.jpg"/>
+        
+            <meta property="og:image" content="https://example.com/orignal.jpg"/>
+            <meta class="swiftype" name="image" data-type="enum" content="https://example.com/orignal.jpg"/>
+        
+    
+    <!--STYLES-->
+    
+<link rel="stylesheet" href="/assets/css/style-xvfnj2o9xv19zzpzzydweqhvegynmqvndecmgp9x1tqnkjmbbtwsdcdaxggz.min.css">
 
-  
-  
-<meta name="generator" content="Hexo 7.3.0"></head>
+    <!--STYLES END-->
+    
 
-<body>
-  <div id="container">
-    <div id="wrap">
-      <header id="header">
-  <div id="banner"></div>
-  <div id="header-outer" class="outer">
-    <div id="header-title" class="inner">
-      <h1 id="logo-wrap">
-        <a href="/" id="logo">Hexo</a>
-      </h1>
-      
+    
+
+    
+</head>
+
+    <body>
+        <div id="blog">
+            <!-- Define author's picture -->
+
+
+    
+
+<header id="header" data-behavior="4">
+    <i id="btn-open-sidebar" class="fa fa-lg fa-bars"></i>
+    <div class="header-title">
+        <a
+            class="header-title-link"
+            href="/"
+            aria-label=""
+        >
+            Hexo
+        </a>
     </div>
-    <div id="header-inner" class="inner">
-      <nav id="main-nav">
-        <a id="main-nav-toggle" class="nav-icon"><span class="fa fa-bars"></span></a>
+    
         
-          <a class="main-nav-link" href="/">Home</a>
-        
-          <a class="main-nav-link" href="/archives">Archives</a>
-        
-      </nav>
-      <nav id="sub-nav">
+            <a
+                class="header-right-picture "
+                href="#about"
+                aria-label="打开链接: /#about"
+            >
         
         
-          <a class="nav-icon" href="/atom.xml" title="RSS Feed"><span class="fa fa-rss"></span></a>
-        
-        <a class="nav-icon nav-search-btn" title="Suche"><span class="fa fa-search"></span></a>
-      </nav>
-      <div id="search-form-wrap">
-        <form action="//google.com/search" method="get" accept-charset="UTF-8" class="search-form"><input type="search" name="q" class="search-form-input" placeholder="Suche"><button type="submit" class="search-form-submit">&#xF002;</button><input type="hidden" name="sitesearch" value="https://1416018124.github.io"></form>
-      </div>
-    </div>
-  </div>
+        </a>
+    
 </header>
 
-      <div class="outer">
-        <section id="main"><article id="post-手动部署k8s" class="h-entry article article-type-post" itemprop="blogPost" itemscope itemtype="https://schema.org/BlogPosting">
-  <div class="article-meta">
-    <a href="/2024/12/19/%E6%89%8B%E5%8A%A8%E9%83%A8%E7%BD%B2k8s/" class="article-date">
-  <time class="dt-published" datetime="2024-12-19T15:07:17.000Z" itemprop="datePublished">2024-12-19</time>
-</a>
-    
-  </div>
-  <div class="article-inner">
-    
-    
-      <header class="article-header">
-        
-  
-    <h1 class="p-name article-title" itemprop="headline name">
-      手动部署k8s
-    </h1>
-  
+            <!-- Define author's picture -->
 
-      </header>
+
+<nav id="sidebar" data-behavior="4">
+    <div class="sidebar-container">
+        
+        
+            <ul class="sidebar-buttons">
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/"
+                            
+                            rel="noopener"
+                            title="首页"
+                        >
+                        <i class="sidebar-button-icon fa fa-home" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">首页</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/all-categories"
+                            
+                            rel="noopener"
+                            title="分类"
+                        >
+                        <i class="sidebar-button-icon fa fa-bookmark" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">分类</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/all-tags"
+                            
+                            rel="noopener"
+                            title="标签"
+                        >
+                        <i class="sidebar-button-icon fa fa-tags" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">标签</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/all-archives"
+                            
+                            rel="noopener"
+                            title="归档"
+                        >
+                        <i class="sidebar-button-icon fa fa-archive" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">归档</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link open-algolia-search"
+                            href="#search"
+                            
+                            rel="noopener"
+                            title="搜索"
+                        >
+                        <i class="sidebar-button-icon fa fa-search" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">搜索</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="#about"
+                            
+                            rel="noopener"
+                            title="关于"
+                        >
+                        <i class="sidebar-button-icon fa fa-question" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">关于</span>
+                    </a>
+            </li>
+            
+        </ul>
+        
+            <ul class="sidebar-buttons">
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="https://github.com/1416018124"
+                            
+                                target="_blank"
+                            
+                            rel="noopener"
+                            title="GitHub"
+                        >
+                        <i class="sidebar-button-icon fab fa-github" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">GitHub</span>
+                    </a>
+            </li>
+            
+        </ul>
+        
+    </div>
+</nav>
+
+            
+        <div class="post-header-cover
+                    text-center
+                    post-header-cover--full"
+             style="background-image:url('/2024/12/19/%E6%89%8B%E5%8A%A8%E9%83%A8%E7%BD%B2k8s/image-2.png');"
+             data-behavior="4">
+            
+        </div>
+
+            <div id="main" data-behavior="4"
+                 class="hasCover
+                        hasCoverMetaOut
+                        hasCoverCaption">
+                
+<article class="post">
     
-    <div class="e-content article-entry" itemprop="articleBody">
-      
-        <p>此文档是手动安装k8s集群，主要是用来学习k8s组件的使用及配置。</p>
+        <span class="post-header-cover-caption caption">A beautiful sunrise</span>
+    
+    
+        <div class="post-header main-content-wrap text-center">
+    
+        <h1 class="post-title">
+            手动部署k8s
+        </h1>
+    
+    
+</div>
+
+    
+    <div class="post-content markdown">
+        <div class="main-content-wrap">
+            <p>此文档是手动安装k8s集群，主要是用来学习k8s组件的使用及配置。</p>
 <span id="more"></span>
 <h1 id="集群初始化安装"><a href="#集群初始化安装" class="headerlink" title="集群初始化安装"></a>集群初始化安装</h1><h1 id="1-拓扑规划："><a href="#1-拓扑规划：" class="headerlink" title="1.拓扑规划："></a>1.拓扑规划：</h1><h2 id="机器规划"><a href="#机器规划" class="headerlink" title="机器规划"></a>机器规划</h2><table>
 <thead>
@@ -589,142 +741,155 @@
 
 <p>rancher暂时不支持k8s v1.32.0</p>
 
-      
-    </div>
-    <footer class="article-footer">
-      <a data-url="https://1416018124.github.io/2024/12/19/%E6%89%8B%E5%8A%A8%E9%83%A8%E7%BD%B2k8s/" data-id="cm5b61rk10001wh660ban0q3d" data-title="手动部署k8s" class="article-share-link"><span class="fa fa-share">Teilen</span></a>
-      
-      
-      
-  <ul class="article-tag-list" itemprop="keywords"><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/k8s/" rel="tag">k8s</a></li><li class="article-tag-list-item"><a class="article-tag-list-link" href="/tags/%E8%BF%90%E7%BB%B4/" rel="tag">运维</a></li></ul>
+            
 
-    </footer>
-  </div>
-  
     
-<nav id="article-nav">
-  
-    <a href="/2024/12/30/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/" id="article-nav-newer" class="article-nav-link-wrap">
-      <strong class="article-nav-caption">Neuer</strong>
-      <div class="article-nav-title">
-        
-          手动部署k8s
-        
-      </div>
-    </a>
-  
-  
-    <a href="/2024/12/18/hello-world/" id="article-nav-older" class="article-nav-link-wrap">
-      <strong class="article-nav-caption">Älter</strong>
-      <div class="article-nav-title">Hello World</div>
-    </a>
-  
-</nav>
+    <div class="image-gallery">
+        <div class="image-gallery-metabar">
+            <span>画廊: 4 图片</span>
+        </div>
+        <div class="image-gallery-photos image-gallery-photos--thumbnail">
+            
+            
+            <div class="photo-box">
+                <a
+                    class="photo-box-inner fancybox"
+                    data-fancybox="gallery-cm5b61rk10001wh660ban0q3d"
+                    data-caption="New York"
+                    title="New York"
+                    href="https://1416018124.github.io/2024/12/19/%E6%89%8B%E5%8A%A8%E9%83%A8%E7%BD%B2k8s/image-3.jpg"
+                    aria-label=""
+                >
+                    
 
-  
+                        <img
+                                class="photo" src="https://1416018124.github.io/2024/12/19/%E6%89%8B%E5%8A%A8%E9%83%A8%E7%BD%B2k8s/image-3.jpg"
+                        >
+                    
+                </a>
+            </div>
+            
+            
+            <div class="photo-box">
+                <a
+                    class="photo-box-inner fancybox"
+                    data-fancybox="gallery-cm5b61rk10001wh660ban0q3d"
+                    data-caption="Paris"
+                    title="Paris"
+                    href="https://1416018124.github.io/2024/12/19/%E6%89%8B%E5%8A%A8%E9%83%A8%E7%BD%B2k8s/image-4.png"
+                    aria-label=""
+                >
+                    
+
+                        <img
+                                class="photo" src="https://1416018124.github.io/2024/12/19/%E6%89%8B%E5%8A%A8%E9%83%A8%E7%BD%B2k8s/image-4.png"
+                        >
+                    
+                </a>
+            </div>
+            
+            
+            <div class="photo-box">
+                <a
+                    class="photo-box-inner fancybox"
+                    data-fancybox="gallery-cm5b61rk10001wh660ban0q3d"
+                    data-caption="Dubai"
+                    title="Dubai"
+                    target="_blank" rel="noopener" href="http://i.imgur.com/o9r19kD.jpg"
+                    aria-label=""
+                >
+                    
+
+                        <img
+                                class="photo" src="http://i.imgur.com/o9r19kD.jpg"
+                        >
+                    
+                </a>
+            </div>
+            
+            
+            <div class="photo-box">
+                <a
+                    class="photo-box-inner fancybox"
+                    data-fancybox="gallery-cm5b61rk10001wh660ban0q3d"
+                    data-caption="Sidney"
+                    title="Sidney"
+                    target="_blank" rel="noopener" href="https://example.com/orignal.jpg"
+                    aria-label=""
+                >
+                    
+                </a>
+            </div>
+            
+        </div>
+    </div>
+
+
+        </div>
+    </div>
+    <div id="post-footer" class="post-footer main-content-wrap">
+        
+            <div class="post-footer-tags">
+                <span class="text-color-light text-small">标签</span><br/>
+                
+    <a class="tag tag--primary tag--small t-none-link" href="/tags/k8s/" rel="tag">k8s</a> <a class="tag tag--primary tag--small t-none-link" href="/tags/%E8%BF%90%E7%BB%B4/" rel="tag">运维</a>
+
+            </div>
+        
+        
+        
+    </div>
 </article>
 
 
-</section>
-        
-          <aside id="sidebar">
-  
-    
 
-  
-    
-  <div class="widget-wrap">
-    <h3 class="widget-title">Tags</h3>
-    <div class="widget">
-      <ul class="tag-list" itemprop="keywords"><li class="tag-list-item"><a class="tag-list-link" href="/tags/k8s/" rel="tag">k8s</a></li><li class="tag-list-item"><a class="tag-list-link" href="/tags/%E8%BF%90%E7%BB%B4/" rel="tag">运维</a></li></ul>
-    </div>
-  </div>
-
-
-  
-    
-  <div class="widget-wrap">
-    <h3 class="widget-title">Tag Cloud</h3>
-    <div class="widget tagcloud">
-      <a href="/tags/k8s/" style="font-size: 10px;">k8s</a> <a href="/tags/%E8%BF%90%E7%BB%B4/" style="font-size: 20px;">运维</a>
-    </div>
-  </div>
-
-  
-    
-  <div class="widget-wrap">
-    <h3 class="widget-title">Archiv</h3>
-    <div class="widget">
-      <ul class="archive-list"><li class="archive-list-item"><a class="archive-list-link" href="/archives/2024/12/">十二月 2024</a></li></ul>
-    </div>
-  </div>
-
-
-  
-    
-  <div class="widget-wrap">
-    <h3 class="widget-title">letzter Beitrag</h3>
-    <div class="widget">
-      <ul>
-        
-          <li>
-            <a href="/2024/12/30/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/">手动部署k8s</a>
-          </li>
-        
-          <li>
-            <a href="/2024/12/19/%E6%89%8B%E5%8A%A8%E9%83%A8%E7%BD%B2k8s/">手动部署k8s</a>
-          </li>
-        
-          <li>
-            <a href="/2024/12/18/hello-world/">Hello World</a>
-          </li>
-        
-      </ul>
-    </div>
-  </div>
-
-  
-</aside>
-        
-      </div>
-      <footer id="footer">
-  
-  <div class="outer">
-    <div id="footer-info" class="inner">
-      
-      &copy; 2024 Jiang Feng<br>
-      Powered by <a href="https://hexo.io/" target="_blank">Hexo</a>
-    </div>
-  </div>
+                <footer id="footer" class="main-content-wrap">
+    <span class="copyrights">
+        Copyrights &copy; 2025 Jiang Feng. All Rights Reserved.
+    </span>
 </footer>
 
+            </div>
+            
+        </div>
+        
+
+
+<div id="about">
+    <div id="about-card">
+        <div id="about-btn-close">
+            <i class="fa fa-times"></i>
+        </div>
+        
+            <h4 id="about-card-name">Jiang Feng</h4>
+        
+            <div id="about-card-bio"><p>author.bio</p>
+</div>
+        
+        
+            <div id="about-card-job">
+                <i class="fa fa-briefcase"></i>
+                <br/>
+                <p>author.job</p>
+
+            </div>
+        
+        
     </div>
-    <nav id="mobile-nav">
-  
-    <a href="/" class="mobile-nav-link">Home</a>
-  
-    <a href="/archives" class="mobile-nav-link">Archives</a>
-  
-</nav>
-    
+</div>
 
+        
+        
+<div id="cover" style="background-image:url('/assets/images/cover.jpg');"></div>
+        <!--SCRIPTS-->
 
-<script src="/js/jquery-3.6.4.min.js"></script>
+<script src="/assets/js/script-p2ssgnbftin4xedccxbuog4edl9jkt5x6ei7phvwevjlrkkr0xvvl08iwpyl.min.js"></script>
 
-
-
-  
-<script src="/fancybox/jquery.fancybox.min.js"></script>
-
-
-
-
-<script src="/js/script.js"></script>
+<!--SCRIPTS END-->
 
 
 
 
 
-  </div>
-</body>
+    </body>
 </html>
