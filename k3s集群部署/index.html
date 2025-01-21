@@ -1,0 +1,417 @@
+
+<!DOCTYPE html>
+<html lang="zh-cn">
+    
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="generator" content="Hexo">
+    <title>k3s集群部署 - Hexo</title>
+    <meta name="author" content="Jiang Feng">
+    
+        <meta name="keywords" content="javascript,hexo">
+    
+    
+    
+    <script type="application/ld+json">{"@context":"http://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Jiang Feng","sameAs":["https://github.com/1416018124"]},"articleBody":"使用k3s安装k8s集群的好处是便捷，k3s 集群对于rancher有非常好的兼容。\n机器规划\n\n\n1. 机器规划\n\n\nhostname\nrole\nip\n配置\nOS\n\n\n\nk8s-01\nmaster\n192.168.3.24\n8c-32g\ndebian12.8\n\n\nk8s-02\nworker\n192.168.3.25\n8c-32g\ndebian12.8\n\n\nk8s-03\nworker\n192.168.3.26\n8c-32g\ndebian12.8\n\n\n2.部署2.1配置时区如果这步骤不做，worker节点加入集群时会出现很多的问题\n123apt-get install tzdata ntpdate -ytimedatectl set-timezone Asia/Shanghaintpdate ntp.aliyun.com\n\n\n\n2.2部署docker12345apt-get install apt-transport-https ca-certificates curl software-properties-common -ycurl -fsSL https://download.docker.com/linux/debian/gpg | apt-key add -add-apt-repository &quot;deb [arch=amd64] https://download.docker.com/linux/debian $(lsb_release -cs) stable&quot;apt-get updateapt-get install docker-ce docker-ce-cli containerd.io\n\n\n\n2.3部署k3s1234567#mastercurl -sfL https://rancher-mirror.rancher.cn/k3s/k3s-install.sh | INSTALL_K3S_EXEC=&quot;server --token 12345 --docker&quot; INSTALL_K3S_MIRROR=cn sh -sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/configexport KUBECONFIG=~/.kube/config#agentcurl -sfL https://get.k3s.io | INSTALL_K3S_EXEC=&quot;agent --server https://192.168.3.24:6443 --token 12345 --docker&quot; sh -\n\n\n\n2.4安装helm12curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3chmod 700 get_helm.sh\n\n\n\n2.4给docker配置代理（三台均部署）12345678#mkdir -p /etc/systemd/system/docker.service.d#cat /etc/systemd/system/docker.service.d/proxy.conf[Service]Environment=&quot;HTTP_PROXY=http://192.168.3.24:7890/&quot;Environment=&quot;HTTPS_PROXY=http://192.168.3.24:7890/&quot;Environment=&quot;NO_PROXY=localhost,127.0.0.1&quot;systemctl daemon-reloadsystemctl restart docker\n\n\n\n\n\n\n\n2.5部署rancher1234567891011helm repo add rancher-stable https://releases.rancher.com/server-charts/stablehelm repo add jetstack https://charts.jetstack.iohelm repo updatehelm install cert-manager jetstack/cert-manager \\  --namespace cert-manager \\  --create-namespacekubectl create namespace cattle-systemhelm install rancher-stable/rancher -n cattle-systemhelm repo add rancher-latest https://releases.rancher.com/server-charts/latest\n\n\n\n3.打开rancher3.1在本机配置一个指向k8s的默认路由我配置的这个路由网关指向了k8s-01这台设备的IP，让他帮我转发请求\n12#sudo route -n add -net 192.168.0.0（需进入的网段） -netmask 255.255.255.0 （掩码）192.168.xxx.xxx （进该网段的网关）sudo route -n add -net 10.43.0.0 -netmask 255.255.0.0 192.168.3.24\n\n\n\n3.2查看bootstrip的默认密码1kubectl get secret --namespace cattle-system bootstrap-secret -o go-template=&#x27;&#123;&#123;.data.bootstrapPassword|base64decode&#125;&#125;&#123;&#123; &quot;\\n&quot; &#125;&#125;&#x27;\n\n\n\n3.3查看rancher服务的具体IP1234#kubectl get services -n cattle-systemNAME              TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)          AGErancher           ClusterIP   10.43.184.201   &lt;none&gt;        80/TCP,443/TCP   4d11hrancher-webhook   ClusterIP   10.43.224.171   &lt;none&gt;        443/TCP          4d11h\n\n\n\n\n\n4.部署longhornLonghorn 是 Kubernetes 的一个轻量级、可靠且易于使用的分布式块存储系统。\n由于和rancher是一个公司开发，在使用上更加方便，因此选择它作为存储服务。\n由于我的磁盘属于块存储，因此需要手动添加,longhorn 在rancher上添加完毕后，访问https://rancher.fengzhigu.cloud/k8s/clusters/local/api/v1/namespaces/longhorn-system/services/http:longhorn-frontend:80/proxy/#/node\n添加方式为在longhorn的node 列表里添加。\n\n错误1此时会出现报错：admission webhook “validator.longhorn.io” denied the request: update disk on node k8s-01 error: The disk disk-1(&#x2F;dev&#x2F;sda2) is a block device, but the SPDK feature is not enabled\n错误分析:\n\n该错误表明，在更新节点 k8s-01 上的磁盘时，被 admission webhook &quot;validator.longhorn.io&quot; 拒绝了请求。\n具体问题是尝试更新的磁盘 disk-1(/dev/sda2) 是一个块设备，但 SPDK 特性未启用。SPDK（Storage Performance Development Kit）是一个旨在提供高性能存储的开源存储框架，Longhorn 可能需要启用 SPDK 特性才能使用某些块设备。\n\n解决步骤：\n\n启用SPDK,在setting-&gt;General,找到V2 Data Engine 开启它。\n\n错误2此时就2出现另一个报错：failed to set the setting v2-data-engine with invalid value true: not enough hugepages-2Mi capacity for node k8s-02, requested 2Gi, capacity 0\n错误分析\n\n该错误表明在设置 v2-data-engine 时失败，因为对于节点 k8s-02 来说，设置的参数值为 true 是无效的。\n具体问题是没有足够的 hugepages-2Mi 容量，所需的 hugepages-2Mi 是 2Gi，但该节点的容量为 0。hugepages 是 Linux 系统中的大页内存管理机制，用于提供更大的内存页面，在一些高性能存储和网络应用中使用，如 Longhorn 的 v2-data-engine 可能需要使用 hugepages-2Mi 来提高性能。\n\n解决方式：\n需要修改 GRUB 配置文件，在 /etc/default/grub 中添加或修改 GRUB_CMDLINE_LINUX 选项\n在 GRUB_CMDLINE_LINUX 中添加 hugepagesz=2M hugepages=1024，然后更新 GRUB 并重启节点\n\n12sudo update-grubsudo reboot\n\n","dateCreated":"2025-01-21T23:18:18+08:00","dateModified":"2025-01-21T23:37:55+08:00","datePublished":"2025-01-21T23:18:18+08:00","description":"使用k3s安装k8s集群的好处是便捷，k3s 集群对于rancher有非常好的兼容。\n机器规划","headline":"k3s集群部署","image":["image-1.png","image-2.png"],"mainEntityOfPage":{"@type":"WebPage","@id":"https://1416018124.github.io/k3s%E9%9B%86%E7%BE%A4%E9%83%A8%E7%BD%B2/"},"publisher":{"@type":"Organization","name":"Jiang Feng","sameAs":["https://github.com/1416018124"]},"url":"https://1416018124.github.io/k3s%E9%9B%86%E7%BE%A4%E9%83%A8%E7%BD%B2/","keywords":"k8s, 运维","thumbnailUrl":"image-1.png"}</script>
+    <meta name="description" content="使用k3s安装k8s集群的好处是便捷，k3s 集群对于rancher有非常好的兼容。 机器规划">
+<meta property="og:type" content="blog">
+<meta property="og:title" content="k3s集群部署">
+<meta property="og:url" content="https://1416018124.github.io/k3s%E9%9B%86%E7%BE%A4%E9%83%A8%E7%BD%B2/index.html">
+<meta property="og:site_name" content="Hexo">
+<meta property="og:description" content="使用k3s安装k8s集群的好处是便捷，k3s 集群对于rancher有非常好的兼容。 机器规划">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://1416018124.github.io/k3s%E9%9B%86%E7%BE%A4%E9%83%A8%E7%BD%B2/image-20250121223948569.png">
+<meta property="og:image" content="https://1416018124.github.io/k3s%E9%9B%86%E7%BE%A4%E9%83%A8%E7%BD%B2/image-20250121224750054.png">
+<meta property="article:published_time" content="2025-01-21T15:18:18.000Z">
+<meta property="article:modified_time" content="2025-01-21T15:37:55.318Z">
+<meta property="article:author" content="Jiang Feng">
+<meta property="article:tag" content="k8s">
+<meta property="article:tag" content="运维">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://1416018124.github.io/k3s%E9%9B%86%E7%BE%A4%E9%83%A8%E7%BD%B2/image-20250121223948569.png">
+    
+    
+        
+    
+    
+    
+        <meta property="og:image" content="https://1416018124.github.io/k3s%E9%9B%86%E7%BE%A4%E9%83%A8%E7%BD%B2/image-1.png"/>
+        <meta class="swiftype" name="image" data-type="enum" content="https://1416018124.github.io/k3s%E9%9B%86%E7%BE%A4%E9%83%A8%E7%BD%B2/image-1.png"/>
+    
+    
+        <meta property="og:image" content="https://1416018124.github.io/k3s%E9%9B%86%E7%BE%A4%E9%83%A8%E7%BD%B2/image-2.png"/>
+        <meta class="swiftype" name="image" data-type="enum" content="https://1416018124.github.io/k3s%E9%9B%86%E7%BE%A4%E9%83%A8%E7%BD%B2/image-2.png"/>
+    
+    
+    <!--STYLES-->
+    
+<link rel="stylesheet" href="/assets/css/style-xvfnj2o9xv19zzpzzydweqhvegynmqvndecmgp9x1tqnkjmbbtwsdcdaxggz.min.css">
+
+    <!--STYLES END-->
+    
+
+    
+
+    
+</head>
+
+    <body>
+        <div id="blog">
+            <!-- Define author's picture -->
+
+
+    
+
+<header id="header" data-behavior="4">
+    <i id="btn-open-sidebar" class="fa fa-lg fa-bars"></i>
+    <div class="header-title">
+        <a
+            class="header-title-link"
+            href="/"
+            aria-label=""
+        >
+            Hexo
+        </a>
+    </div>
+    
+        
+            <a
+                class="header-right-picture "
+                href="#about"
+                aria-label="打开链接: /#about"
+            >
+        
+        
+        </a>
+    
+</header>
+
+            <!-- Define author's picture -->
+
+
+<nav id="sidebar" data-behavior="4">
+    <div class="sidebar-container">
+        
+        
+            <ul class="sidebar-buttons">
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/"
+                            
+                            rel="noopener"
+                            title="首页"
+                        >
+                        <i class="sidebar-button-icon fa fa-home" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">首页</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/all-categories"
+                            
+                            rel="noopener"
+                            title="分类"
+                        >
+                        <i class="sidebar-button-icon fa fa-bookmark" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">分类</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/all-tags"
+                            
+                            rel="noopener"
+                            title="标签"
+                        >
+                        <i class="sidebar-button-icon fa fa-tags" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">标签</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/all-archives"
+                            
+                            rel="noopener"
+                            title="归档"
+                        >
+                        <i class="sidebar-button-icon fa fa-archive" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">归档</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link open-algolia-search"
+                            href="#search"
+                            
+                            rel="noopener"
+                            title="搜索"
+                        >
+                        <i class="sidebar-button-icon fa fa-search" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">搜索</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="#about"
+                            
+                            rel="noopener"
+                            title="关于"
+                        >
+                        <i class="sidebar-button-icon fa fa-question" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">关于</span>
+                    </a>
+            </li>
+            
+        </ul>
+        
+            <ul class="sidebar-buttons">
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="https://github.com/1416018124"
+                            
+                                target="_blank"
+                            
+                            rel="noopener"
+                            title="GitHub"
+                        >
+                        <i class="sidebar-button-icon fab fa-github" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">GitHub</span>
+                    </a>
+            </li>
+            
+        </ul>
+        
+    </div>
+</nav>
+
+            
+        <div class="post-header-cover
+                    text-center
+                    post-header-cover--full"
+             style="background-image:url('/k3s%E9%9B%86%E7%BE%A4%E9%83%A8%E7%BD%B2/image-2.png');"
+             data-behavior="4">
+            
+        </div>
+
+            <div id="main" data-behavior="4"
+                 class="hasCover
+                        hasCoverMetaOut
+                        hasCoverCaption">
+                
+<article class="post">
+    
+        <span class="post-header-cover-caption caption">A beautiful sunrise</span>
+    
+    
+        <div class="post-header main-content-wrap text-center">
+    
+        <h1 class="post-title">
+            k3s集群部署
+        </h1>
+    
+    
+</div>
+
+    
+    <div class="post-content markdown">
+        <div class="main-content-wrap">
+            <p>使用k3s安装k8s集群的好处是便捷，k3s 集群对于rancher有非常好的兼容。</p>
+<p>机器规划</p>
+<span id="more"></span>
+
+<h1 id="1-机器规划"><a href="#1-机器规划" class="headerlink" title="1. 机器规划"></a>1. 机器规划</h1><table>
+<thead>
+<tr>
+<th>hostname</th>
+<th>role</th>
+<th>ip</th>
+<th>配置</th>
+<th>OS</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>k8s-01</td>
+<td>master</td>
+<td>192.168.3.24</td>
+<td>8c-32g</td>
+<td>debian12.8</td>
+</tr>
+<tr>
+<td>k8s-02</td>
+<td>worker</td>
+<td>192.168.3.25</td>
+<td>8c-32g</td>
+<td>debian12.8</td>
+</tr>
+<tr>
+<td>k8s-03</td>
+<td>worker</td>
+<td>192.168.3.26</td>
+<td>8c-32g</td>
+<td>debian12.8</td>
+</tr>
+</tbody></table>
+<h1 id="2-部署"><a href="#2-部署" class="headerlink" title="2.部署"></a>2.部署</h1><h2 id="2-1配置时区"><a href="#2-1配置时区" class="headerlink" title="2.1配置时区"></a>2.1配置时区</h2><p>如果这步骤不做，worker节点加入集群时会出现很多的问题</p>
+<figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br></pre></td><td class="code"><pre><span class="line">apt-get install tzdata ntpdate -y</span><br><span class="line">timedatectl set-timezone Asia/Shanghai</span><br><span class="line">ntpdate ntp.aliyun.com</span><br></pre></td></tr></table></figure>
+
+
+
+<h2 id="2-2部署docker"><a href="#2-2部署docker" class="headerlink" title="2.2部署docker"></a>2.2部署docker</h2><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">apt-get install apt-transport-https ca-certificates curl software-properties-common -y</span><br><span class="line">curl -fsSL https://download.docker.com/linux/debian/gpg | apt-key add -</span><br><span class="line">add-apt-repository &quot;deb [arch=amd64] https://download.docker.com/linux/debian $(lsb_release -cs) stable&quot;</span><br><span class="line">apt-get update</span><br><span class="line">apt-get install docker-ce docker-ce-cli containerd.io</span><br></pre></td></tr></table></figure>
+
+
+
+<h2 id="2-3部署k3s"><a href="#2-3部署k3s" class="headerlink" title="2.3部署k3s"></a>2.3部署k3s</h2><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">master</span></span><br><span class="line">curl -sfL https://rancher-mirror.rancher.cn/k3s/k3s-install.sh | INSTALL_K3S_EXEC=&quot;server --token 12345 --docker&quot; INSTALL_K3S_MIRROR=cn sh -</span><br><span class="line">sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config</span><br><span class="line">export KUBECONFIG=~/.kube/config</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">agent</span></span><br><span class="line">curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC=&quot;agent --server https://192.168.3.24:6443 --token 12345 --docker&quot; sh -</span><br></pre></td></tr></table></figure>
+
+
+
+<h2 id="2-4安装helm"><a href="#2-4安装helm" class="headerlink" title="2.4安装helm"></a>2.4安装helm</h2><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3</span><br><span class="line">chmod 700 get_helm.sh</span><br></pre></td></tr></table></figure>
+
+
+
+<h2 id="2-4给docker配置代理（三台均部署）"><a href="#2-4给docker配置代理（三台均部署）" class="headerlink" title="2.4给docker配置代理（三台均部署）"></a>2.4给docker配置代理（三台均部署）</h2><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="built_in">mkdir</span> -p /etc/systemd/system/docker.service.d</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="built_in">cat</span> /etc/systemd/system/docker.service.d/proxy.conf</span></span><br><span class="line">[Service]</span><br><span class="line">Environment=&quot;HTTP_PROXY=http://192.168.3.24:7890/&quot;</span><br><span class="line">Environment=&quot;HTTPS_PROXY=http://192.168.3.24:7890/&quot;</span><br><span class="line">Environment=&quot;NO_PROXY=localhost,127.0.0.1&quot;</span><br><span class="line">systemctl daemon-reload</span><br><span class="line">systemctl restart docker</span><br></pre></td></tr></table></figure>
+
+
+
+
+
+
+
+<h2 id="2-5部署rancher"><a href="#2-5部署rancher" class="headerlink" title="2.5部署rancher"></a>2.5部署rancher</h2><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">helm repo add rancher-stable https://releases.rancher.com/server-charts/stable</span><br><span class="line">helm repo add jetstack https://charts.jetstack.io</span><br><span class="line">helm repo update</span><br><span class="line">helm install cert-manager jetstack/cert-manager \</span><br><span class="line">  --namespace cert-manager \</span><br><span class="line">  --create-namespace</span><br><span class="line"></span><br><span class="line">kubectl create namespace cattle-system</span><br><span class="line">helm install rancher-stable/rancher -n cattle-system</span><br><span class="line"></span><br><span class="line">helm repo add rancher-latest https://releases.rancher.com/server-charts/latest</span><br></pre></td></tr></table></figure>
+
+
+
+<h1 id="3-打开rancher"><a href="#3-打开rancher" class="headerlink" title="3.打开rancher"></a>3.打开rancher</h1><h2 id="3-1在本机配置一个指向k8s的默认路由"><a href="#3-1在本机配置一个指向k8s的默认路由" class="headerlink" title="3.1在本机配置一个指向k8s的默认路由"></a>3.1在本机配置一个指向k8s的默认路由</h2><p>我配置的这个路由网关指向了k8s-01这台设备的IP，让他帮我转发请求</p>
+<figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="built_in">sudo</span> route -n add -net 192.168.0.0（需进入的网段） -netmask 255.255.255.0 （掩码）192.168.xxx.xxx （进该网段的网关）</span></span><br><span class="line">sudo route -n add -net 10.43.0.0 -netmask 255.255.0.0 192.168.3.24</span><br></pre></td></tr></table></figure>
+
+
+
+<h2 id="3-2查看bootstrip的默认密码"><a href="#3-2查看bootstrip的默认密码" class="headerlink" title="3.2查看bootstrip的默认密码"></a>3.2查看bootstrip的默认密码</h2><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">kubectl get secret --namespace cattle-system bootstrap-secret -o go-template=&#x27;&#123;&#123;.data.bootstrapPassword|base64decode&#125;&#125;&#123;&#123; &quot;\n&quot; &#125;&#125;&#x27;</span><br></pre></td></tr></table></figure>
+
+
+
+<h3 id="3-3查看rancher服务的具体IP"><a href="#3-3查看rancher服务的具体IP" class="headerlink" title="3.3查看rancher服务的具体IP"></a>3.3查看rancher服务的具体IP</h3><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">kubectl get services -n cattle-system</span></span><br><span class="line">NAME              TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)          AGE</span><br><span class="line">rancher           ClusterIP   10.43.184.201   &lt;none&gt;        80/TCP,443/TCP   4d11h</span><br><span class="line">rancher-webhook   ClusterIP   10.43.224.171   &lt;none&gt;        443/TCP          4d11h</span><br></pre></td></tr></table></figure>
+
+
+
+
+
+<h1 id="4-部署longhorn"><a href="#4-部署longhorn" class="headerlink" title="4.部署longhorn"></a>4.部署longhorn</h1><p>Longhorn 是 Kubernetes 的一个轻量级、可靠且易于使用的分布式块存储系统。</p>
+<p>由于和rancher是一个公司开发，在使用上更加方便，因此选择它作为存储服务。</p>
+<p>由于我的磁盘属于块存储，因此需要手动添加,longhorn 在rancher上添加完毕后，访问<a target="_blank" rel="noopener" href="https://rancher.fengzhigu.cloud/k8s/clusters/local/api/v1/namespaces/longhorn-system/services/http:longhorn-frontend:80/proxy/#/node">https://rancher.fengzhigu.cloud/k8s/clusters/local/api/v1/namespaces/longhorn-system/services/http:longhorn-frontend:80/proxy/#/node</a></p>
+<p>添加方式为在longhorn的node 列表里添加。</p>
+<p><img src="/k3s%E9%9B%86%E7%BE%A4%E9%83%A8%E7%BD%B2/image-20250121223948569.png" alt="image-20250121223948569"></p>
+<h2 id="错误1"><a href="#错误1" class="headerlink" title="错误1"></a>错误1</h2><p>此时会出现报错：admission webhook “validator.longhorn.io” denied the request: update disk on node k8s-01 error: The disk disk-1(&#x2F;dev&#x2F;sda2) is a block device, but the SPDK feature is not enabled</p>
+<p>错误分析:</p>
+<ul>
+<li>该错误表明，在更新节点 <code>k8s-01</code> 上的磁盘时，被 <code>admission webhook &quot;validator.longhorn.io&quot;</code> 拒绝了请求。</li>
+<li>具体问题是尝试更新的磁盘 <code>disk-1(/dev/sda2)</code> 是一个块设备，但 <code>SPDK</code> 特性未启用。<code>SPDK</code>（Storage Performance Development Kit）是一个旨在提供高性能存储的开源存储框架，Longhorn 可能需要启用 <code>SPDK</code> 特性才能使用某些块设备。</li>
+</ul>
+<p>解决步骤：</p>
+<ul>
+<li>启用SPDK,在setting-&gt;General,找到<code>V2 Data Engine</code> 开启它。</li>
+</ul>
+<h2 id="错误2"><a href="#错误2" class="headerlink" title="错误2"></a>错误2</h2><p>此时就2出现另一个报错：failed to set the setting v2-data-engine with invalid value true: not enough hugepages-2Mi capacity for node k8s-02, requested 2Gi, capacity 0</p>
+<p>错误分析</p>
+<ul>
+<li>该错误表明在设置 <code>v2-data-engine</code> 时失败，因为对于节点 <code>k8s-02</code> 来说，设置的参数值为 <code>true</code> 是无效的。</li>
+<li>具体问题是没有足够的 <code>hugepages-2Mi</code> 容量，所需的 <code>hugepages-2Mi</code> 是 <code>2Gi</code>，但该节点的容量为 <code>0</code>。<code>hugepages</code> 是 Linux 系统中的大页内存管理机制，用于提供更大的内存页面，在一些高性能存储和网络应用中使用，如 Longhorn 的 <code>v2-data-engine</code> 可能需要使用 <code>hugepages-2Mi</code> 来提高性能。</li>
+</ul>
+<p>解决方式：</p>
+<p>需要修改 <code>GRUB</code> 配置文件，在 <code>/etc/default/grub</code> 中添加或修改 <code>GRUB_CMDLINE_LINUX</code> 选项</p>
+<p>在 <code>GRUB_CMDLINE_LINUX</code> 中添加 <code>hugepagesz=2M hugepages=1024</code>，然后更新 <code>GRUB</code> 并重启节点</p>
+<p><img src="/k3s%E9%9B%86%E7%BE%A4%E9%83%A8%E7%BD%B2/image-20250121224750054.png" alt="image-20250121224750054"></p>
+<figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">sudo update-grub</span><br><span class="line">sudo reboot</span><br></pre></td></tr></table></figure>
+
+
+            
+
+
+        </div>
+    </div>
+    <div id="post-footer" class="post-footer main-content-wrap">
+        
+            <div class="post-footer-tags">
+                <span class="text-color-light text-small">标签</span><br/>
+                
+    <a class="tag tag--primary tag--small t-none-link" href="/tags/k8s/" rel="tag">k8s</a> <a class="tag tag--primary tag--small t-none-link" href="/tags/%E8%BF%90%E7%BB%B4/" rel="tag">运维</a>
+
+            </div>
+        
+        
+        
+    </div>
+</article>
+
+
+
+                <footer id="footer" class="main-content-wrap">
+    <span class="copyrights">
+        Copyrights &copy; 2025 Jiang Feng. All Rights Reserved.
+    </span>
+</footer>
+
+            </div>
+            
+        </div>
+        
+
+
+<div id="about">
+    <div id="about-card">
+        <div id="about-btn-close">
+            <i class="fa fa-times"></i>
+        </div>
+        
+            <h4 id="about-card-name">Jiang Feng</h4>
+        
+            <div id="about-card-bio"><p>author.bio</p>
+</div>
+        
+        
+            <div id="about-card-job">
+                <i class="fa fa-briefcase"></i>
+                <br/>
+                <p>author.job</p>
+
+            </div>
+        
+        
+    </div>
+</div>
+
+        
+        
+<div id="cover" style="background-image:url('/assets/images/cover.jpg');"></div>
+        <!--SCRIPTS-->
+
+<script src="/assets/js/script-p2ssgnbftin4xedccxbuog4edl9jkt5x6ei7phvwevjlrkkr0xvvl08iwpyl.min.js"></script>
+
+<!--SCRIPTS END-->
+
+
+
+
+
+    </body>
+</html>

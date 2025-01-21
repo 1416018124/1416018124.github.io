@@ -13,11 +13,11 @@
     
     
     
-    <script type="application/ld+json">{"@context":"http://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Jiang Feng","sameAs":["https://github.com/1416018124"]},"articleBody":"背景:下载镜像和依赖的时候经常因为防火墙的问题，导致许多依赖下载失败，所以需要服务器添加一个代理。\n\n软件下载由于clash的作者把github的库给删了，所以只能从第三方下载。\n下载地址如下：https://pub-eac3eb5670f44f09984dee5c57939316.r2.dev/clash-linux-amd64-v1.18.0.gz\n去你的梯子平台下载一个clash的yaml文件\n123456gzip -dk clash-*-*-v1.18.0.gz # 解压压缩包chmod +x clash-*-*-v1.18.0 # 赋与可执行权限cp clash-*-*-v1.18.0 /usr/local/bin/clash # 添加到用户可执行文件目录mkdir /usr/local/etc/clash # 创建配置文件夹wget -P /usr/local/etc/clash https://***.*/feeds/***/clash.yml # 下载订阅文件到本地请将链接替换为实际复制的配置链接mv /usr/local/etc/clash/clash.yml /usr/local/etc/clash/config.yaml\n\n\n\n运行clash1234567891011121314151617# cat /etc/systemd/system/clash.service[Unit]Description=Clash ServiceAfter=network.target[Service]Type=simpleExecStart=/usr/local/bin/clash -d /usr/local/etc/clashRestart=on-failureUser=rootLimitNOFILE=512000[Install]WantedBy=multi-user.targetsystemctl enable clashsystemctl start clash\n\n\n\n查看运行状态\n123456789101112131415161718192021systemctl status  clash* clash.service - Clash Service     Loaded: loaded (/etc/systemd/system/clash.service; enabled; preset: enabled)     Active: active (running) since Tue 2024-12-31 06:52:49 CST; 1min 22s ago   Main PID: 46021 (clash)      Tasks: 11 (limit: 38460)     Memory: 11.7M        CPU: 84ms     CGroup: /system.slice/clash.service             `-46021 /usr/local/bin/clash -d /usr/local/etc/clashDec 31 06:52:49 k8s-01 clash[46021]: time=&quot;2024-12-31T06:52:49+08:00&quot; level=info msg=&quot;Start initial compatible provider &lt;E2&gt;&gt;Dec 31 06:52:49 k8s-01 clash[46021]: time=&quot;2024-12-31T06:52:49+08:00&quot; level=info msg=&quot;Start initial compatible provider &lt;F0&gt;&gt;Dec 31 06:52:49 k8s-01 clash[46021]: time=&quot;2024-12-31T06:52:49+08:00&quot; level=info msg=&quot;Start initial compatible provider &lt;F0&gt;&gt;Dec 31 06:52:49 k8s-01 clash[46021]: time=&quot;2024-12-31T06:52:49+08:00&quot; level=info msg=&quot;Start initial compatible provider &lt;F0&gt;&gt;Dec 31 06:52:49 k8s-01 clash[46021]: time=&quot;2024-12-31T06:52:49+08:00&quot; level=info msg=&quot;Start initial compatible provider &lt;E5&gt;&gt;Dec 31 06:52:49 k8s-01 clash[46021]: time=&quot;2024-12-31T06:52:49+08:00&quot; level=info msg=&quot;Start initial compatible provider &lt;F0&gt;&gt;Dec 31 06:52:49 k8s-01 clash[46021]: time=&quot;2024-12-31T06:52:49+08:00&quot; level=info msg=&quot;Start initial compatible provider &lt;E2&gt;&gt;Dec 31 06:52:49 k8s-01 clash[46021]: time=&quot;2024-12-31T06:52:49+08:00&quot; level=info msg=&quot;RESTful API listening at: 127.0.0.1:90&gt;Dec 31 06:52:49 k8s-01 clash[46021]: time=&quot;2024-12-31T06:52:49+08:00&quot; level=info msg=&quot;inbound http://:7890 create success.&quot;Dec 31 06:52:49 k8s-01 clash[46021]: time=&quot;2024-12-31T06:52:49+08:00&quot; level=info msg=&quot;inbound socks://:7891 create success.&quot;\n\n\n\n配置代理根据上面的配置文件可以看到，启用的端口是7890，本机的IP是192.168.3.24。\n在其他linux配置梯子则为\n12345#cat /etc/profileexport http_proxy=&quot;http://192.168.3.24:7890&quot;export https_proxy=&quot;http://192.168.3.24:7890&quot;#source /etc/profile\n\n","dateCreated":"2024-12-30T22:56:17+08:00","dateModified":"2025-01-08T20:17:01+08:00","datePublished":"2024-12-30T22:56:17+08:00","description":"背景:下载镜像和依赖的时候经常因为防火墙的问题，导致许多依赖下载失败，所以需要服务器添加一个代理。","headline":"linux配置梯子","image":["image-1.png","image-2.png"],"mainEntityOfPage":{"@type":"WebPage","@id":"https://1416018124.github.io/2024/12/30/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/"},"publisher":{"@type":"Organization","name":"Jiang Feng","sameAs":["https://github.com/1416018124"]},"url":"https://1416018124.github.io/2024/12/30/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/","keywords":"运维","thumbnailUrl":"image-1.png"}</script>
+    <script type="application/ld+json">{"@context":"http://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Jiang Feng","sameAs":["https://github.com/1416018124"]},"articleBody":"背景:下载镜像和依赖的时候经常因为防火墙的问题，导致许多依赖下载失败，所以需要服务器添加一个代理。\n\n软件下载由于clash的作者把github的库给删了，所以只能从第三方下载。\n下载地址如下：https://pub-eac3eb5670f44f09984dee5c57939316.r2.dev/clash-linux-amd64-v1.18.0.gz\n去你的梯子平台下载一个clash的yaml文件\n123456gzip -dk clash-*-*-v1.18.0.gz # 解压压缩包chmod +x clash-*-*-v1.18.0 # 赋与可执行权限cp clash-*-*-v1.18.0 /usr/local/bin/clash # 添加到用户可执行文件目录mkdir /usr/local/etc/clash # 创建配置文件夹wget -P /usr/local/etc/clash https://***.*/feeds/***/clash.yml # 下载订阅文件到本地请将链接替换为实际复制的配置链接mv /usr/local/etc/clash/clash.yml /usr/local/etc/clash/config.yaml\n\n\n\n运行clash1234567891011121314151617# cat /etc/systemd/system/clash.service[Unit]Description=Clash ServiceAfter=network.target[Service]Type=simpleExecStart=/usr/local/bin/clash -d /usr/local/etc/clashRestart=on-failureUser=rootLimitNOFILE=512000[Install]WantedBy=multi-user.targetsystemctl enable clashsystemctl start clash\n\n\n\n查看运行状态\n123456789101112131415161718192021systemctl status  clash* clash.service - Clash Service     Loaded: loaded (/etc/systemd/system/clash.service; enabled; preset: enabled)     Active: active (running) since Tue 2024-12-31 06:52:49 CST; 1min 22s ago   Main PID: 46021 (clash)      Tasks: 11 (limit: 38460)     Memory: 11.7M        CPU: 84ms     CGroup: /system.slice/clash.service             `-46021 /usr/local/bin/clash -d /usr/local/etc/clashDec 31 06:52:49 k8s-01 clash[46021]: time=&quot;2024-12-31T06:52:49+08:00&quot; level=info msg=&quot;Start initial compatible provider &lt;E2&gt;&gt;Dec 31 06:52:49 k8s-01 clash[46021]: time=&quot;2024-12-31T06:52:49+08:00&quot; level=info msg=&quot;Start initial compatible provider &lt;F0&gt;&gt;Dec 31 06:52:49 k8s-01 clash[46021]: time=&quot;2024-12-31T06:52:49+08:00&quot; level=info msg=&quot;Start initial compatible provider &lt;F0&gt;&gt;Dec 31 06:52:49 k8s-01 clash[46021]: time=&quot;2024-12-31T06:52:49+08:00&quot; level=info msg=&quot;Start initial compatible provider &lt;F0&gt;&gt;Dec 31 06:52:49 k8s-01 clash[46021]: time=&quot;2024-12-31T06:52:49+08:00&quot; level=info msg=&quot;Start initial compatible provider &lt;E5&gt;&gt;Dec 31 06:52:49 k8s-01 clash[46021]: time=&quot;2024-12-31T06:52:49+08:00&quot; level=info msg=&quot;Start initial compatible provider &lt;F0&gt;&gt;Dec 31 06:52:49 k8s-01 clash[46021]: time=&quot;2024-12-31T06:52:49+08:00&quot; level=info msg=&quot;Start initial compatible provider &lt;E2&gt;&gt;Dec 31 06:52:49 k8s-01 clash[46021]: time=&quot;2024-12-31T06:52:49+08:00&quot; level=info msg=&quot;RESTful API listening at: 127.0.0.1:90&gt;Dec 31 06:52:49 k8s-01 clash[46021]: time=&quot;2024-12-31T06:52:49+08:00&quot; level=info msg=&quot;inbound http://:7890 create success.&quot;Dec 31 06:52:49 k8s-01 clash[46021]: time=&quot;2024-12-31T06:52:49+08:00&quot; level=info msg=&quot;inbound socks://:7891 create success.&quot;\n\n\n\n配置代理根据上面的配置文件可以看到，启用的端口是7890，本机的IP是192.168.3.24。\n在其他linux配置梯子则为\n12345#cat /etc/profileexport http_proxy=&quot;http://192.168.3.24:7890&quot;export https_proxy=&quot;http://192.168.3.24:7890&quot;#source /etc/profile\n\n","dateCreated":"2024-12-30T22:56:17+08:00","dateModified":"2025-01-08T20:17:01+08:00","datePublished":"2024-12-30T22:56:17+08:00","description":"背景:下载镜像和依赖的时候经常因为防火墙的问题，导致许多依赖下载失败，所以需要服务器添加一个代理。","headline":"linux配置梯子","image":["image-1.png","image-2.png"],"mainEntityOfPage":{"@type":"WebPage","@id":"https://1416018124.github.io/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/"},"publisher":{"@type":"Organization","name":"Jiang Feng","sameAs":["https://github.com/1416018124"]},"url":"https://1416018124.github.io/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/","keywords":"运维","thumbnailUrl":"image-1.png"}</script>
     <meta name="description" content="背景:下载镜像和依赖的时候经常因为防火墙的问题，导致许多依赖下载失败，所以需要服务器添加一个代理。">
 <meta property="og:type" content="blog">
 <meta property="og:title" content="linux配置梯子">
-<meta property="og:url" content="https://1416018124.github.io/2024/12/30/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/index.html">
+<meta property="og:url" content="https://1416018124.github.io/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/index.html">
 <meta property="og:site_name" content="Hexo">
 <meta property="og:description" content="背景:下载镜像和依赖的时候经常因为防火墙的问题，导致许多依赖下载失败，所以需要服务器添加一个代理。">
 <meta property="og:locale" content="zh_CN">
@@ -32,20 +32,20 @@
     
     
     
-        <meta property="og:image" content="https://1416018124.github.io/2024/12/30/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-1.png"/>
-        <meta class="swiftype" name="image" data-type="enum" content="https://1416018124.github.io/2024/12/30/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-1.png"/>
+        <meta property="og:image" content="https://1416018124.github.io/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-1.png"/>
+        <meta class="swiftype" name="image" data-type="enum" content="https://1416018124.github.io/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-1.png"/>
     
     
-        <meta property="og:image" content="https://1416018124.github.io/2024/12/30/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-2.png"/>
-        <meta class="swiftype" name="image" data-type="enum" content="https://1416018124.github.io/2024/12/30/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-2.png"/>
+        <meta property="og:image" content="https://1416018124.github.io/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-2.png"/>
+        <meta class="swiftype" name="image" data-type="enum" content="https://1416018124.github.io/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-2.png"/>
     
     
         
-            <meta property="og:image" content="https://1416018124.github.io/2024/12/30/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-3.jpg"/>
-            <meta class="swiftype" name="image" data-type="enum" content="https://1416018124.github.io/2024/12/30/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-3.jpg"/>
+            <meta property="og:image" content="https://1416018124.github.io/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-3.jpg"/>
+            <meta class="swiftype" name="image" data-type="enum" content="https://1416018124.github.io/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-3.jpg"/>
         
-            <meta property="og:image" content="https://1416018124.github.io/2024/12/30/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-4.png"/>
-            <meta class="swiftype" name="image" data-type="enum" content="https://1416018124.github.io/2024/12/30/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-4.png"/>
+            <meta property="og:image" content="https://1416018124.github.io/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-4.png"/>
+            <meta class="swiftype" name="image" data-type="enum" content="https://1416018124.github.io/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-4.png"/>
         
             <meta property="og:image" content="http://i.imgur.com/o9r19kD.jpg"/>
             <meta class="swiftype" name="image" data-type="enum" content="http://i.imgur.com/o9r19kD.jpg"/>
@@ -219,7 +219,7 @@
         <div class="post-header-cover
                     text-center
                     post-header-cover--full"
-             style="background-image:url('/2024/12/30/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-2.png');"
+             style="background-image:url('/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-2.png');"
              data-behavior="4">
             
         </div>
@@ -282,16 +282,16 @@
             <div class="photo-box">
                 <a
                     class="photo-box-inner fancybox"
-                    data-fancybox="gallery-cm5b61rjz0000wh663wbwdggp"
+                    data-fancybox="gallery-cm66nfsx30008bp66c6gt0gpj"
                     data-caption="New York"
                     title="New York"
-                    href="https://1416018124.github.io/2024/12/30/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-3.jpg"
+                    href="https://1416018124.github.io/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-3.jpg"
                     aria-label=""
                 >
                     
 
                         <img
-                                class="photo" src="https://1416018124.github.io/2024/12/30/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-3.jpg"
+                                class="photo" src="https://1416018124.github.io/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-3.jpg"
                         >
                     
                 </a>
@@ -301,16 +301,16 @@
             <div class="photo-box">
                 <a
                     class="photo-box-inner fancybox"
-                    data-fancybox="gallery-cm5b61rjz0000wh663wbwdggp"
+                    data-fancybox="gallery-cm66nfsx30008bp66c6gt0gpj"
                     data-caption="Paris"
                     title="Paris"
-                    href="https://1416018124.github.io/2024/12/30/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-4.png"
+                    href="https://1416018124.github.io/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-4.png"
                     aria-label=""
                 >
                     
 
                         <img
-                                class="photo" src="https://1416018124.github.io/2024/12/30/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-4.png"
+                                class="photo" src="https://1416018124.github.io/linux%E9%85%8D%E7%BD%AE%E6%A2%AF%E5%AD%90/image-4.png"
                         >
                     
                 </a>
@@ -320,7 +320,7 @@
             <div class="photo-box">
                 <a
                     class="photo-box-inner fancybox"
-                    data-fancybox="gallery-cm5b61rjz0000wh663wbwdggp"
+                    data-fancybox="gallery-cm66nfsx30008bp66c6gt0gpj"
                     data-caption="Dubai"
                     title="Dubai"
                     target="_blank" rel="noopener" href="http://i.imgur.com/o9r19kD.jpg"
@@ -339,7 +339,7 @@
             <div class="photo-box">
                 <a
                     class="photo-box-inner fancybox"
-                    data-fancybox="gallery-cm5b61rjz0000wh663wbwdggp"
+                    data-fancybox="gallery-cm66nfsx30008bp66c6gt0gpj"
                     data-caption="Sidney"
                     title="Sidney"
                     target="_blank" rel="noopener" href="https://example.com/orignal.jpg"
