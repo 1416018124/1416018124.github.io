@@ -1,0 +1,355 @@
+
+<!DOCTYPE html>
+<html lang="zh-cn">
+    
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="generator" content="Hexo">
+    <title>Openresty框架开发-代码准备 - Hexo</title>
+    <meta name="author" content="Jiang Feng">
+    
+        <meta name="keywords" content="javascript,hexo">
+    
+    
+    
+    <script type="application/ld+json">{"@context":"http://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Jiang Feng","sameAs":["https://github.com/1416018124"]},"articleBody":"从今天开始，介绍一下OPenresty Lua开发以及运维的介绍，能做到快速的功能开发和调优\n\n\n1.代码准备安装到最新版本Openresty的方式有两种，源码编译安装和使用包管理器安装，这里主要介绍一下源码安装。\n1.1 使用包管理器安装Centos 部署命令如下:\n123456789101112#创建一个新的 YUM 仓库文件 openresty.reposudo tee /etc/yum.repos.d/openresty.repo &lt;&lt; EOF[openresty]name=Official OpenResty Repositorybaseurl=https://openresty.org/package/centos/\\$releasever/\\$basearchenabled=1gpgcheck=1gpgkey=https://openresty.org/package/pubkey.gpgEOF#安装sudo yum install openresty\n\nDebian Ubuntu 安装如下：\n12345678# 导入 GPG 密钥wget -qO - https://openresty.org/package/pubkey.gpg | sudo apt-key add -# 添加 OpenResty 仓库echo &quot;deb http://openresty.org/package/ubuntu $(lsb_release -sc) main&quot; | sudo tee /etc/apt/sources.list.d/openresty.list# 更新 APT 包索引sudo apt-get update#安装 OpenRestysudo apt-get install openresty\n\n\n\n1.2 源码编译安装使用上面的apt命令安装虽然比较方便，但是会出现nginx缺少一些模块的情况发生，比如最长使用的vts模块，ngx_http_upstream_check_module ..等等，这时就需要我们使用源码来进行编译了。\n1.2.1 核心依赖介绍OpenResty 源码编译的核心依赖包括：\n\nOpenSSL（用于 HTTPS 和加密）\nPCRE（用于正则表达式）\nzlib（用于 Gzip 压缩）\n\n其他的一些常用模块\n\nnginx-module-vts (实时监控 Nginx 的虚拟主机流量状态)\nngx_http_upstream_check_module (上游服务器进行主动健康检查)\n\n想要在一个脚本里进行编译安装，此时就需要设计一下目录结构以及脚本编写。\n规划目录结构\n1234567891011~/openresty-build/├── sources/               # 存放所有源码│   ├── openresty/         # OpenResty 源码│   ├── openssl/           # OpenSSL 源码│   ├── pcre/              # PCRE 源码│   └── ngx_http_upstream_check_module/  # upstream_check 模块源码├── build/                 # 编译输出目录│   ├── openresty/         # OpenResty 编译结果│   ├── openssl/           # OpenSSL 编译结果│   └── pcre/              # PCRE 编译结果└── install/               # 最终安装目录\n\n\n\n依赖安装如下：\n1apt-get install make gcc zlib1g-dev\n\n\n\nngx_http_upstream_check_module 需要打补丁才能使用\n1234# 进入 OpenResty 中 Nginx 源码目录cd /root/openresty-build/sources/openresty-1.27.1.1/build/nginx-1.27.1patch -p1 &lt; /root/openresty-build/sources/nginx_upstream_check_module-0.4.0/check_1.20.1+.patch\n\n\n\n\n\n安装脚本如下：\n12345678910111213141516171819202122232425262728293031323334353637383940414243444546474849505152535455565758596061626364656667686970717273#!/bin/bash# 基础目录BASE_DIR=$(pwd)SOURCES_DIR=&quot;$BASE_DIR/sources&quot;BUILD_DIR=&quot;$BASE_DIR/build&quot;INSTALL_DIR=&quot;$BASE_DIR/install&quot;# 创建目录mkdir -p &quot;$BUILD_DIR&quot; &quot;$INSTALL_DIR&quot;## 判断 OpenSSL 是否需要编译#if [ ! -d &quot;$BUILD_DIR/openssl/lib64&quot; ]; then#    echo &quot;编译 OpenSSL...&quot;#    cd &quot;$SOURCES_DIR/openssl-3.4.0&quot;#    ./config --prefix=&quot;$BUILD_DIR/openssl&quot; --openssldir=&quot;$BUILD_DIR/openssl&quot;#    make -j$(nproc)#    make install#else#    echo &quot;OpenSSL 已编译，跳过...&quot;#fi# 判断 PCRE 是否需要编译if [ ! -d &quot;$BUILD_DIR/pcre/lib&quot; ]; then    echo &quot;编译 PCRE...&quot;    cd &quot;$SOURCES_DIR/pcre2-10.45&quot;    ./configure --prefix=&quot;$BUILD_DIR/pcre&quot;    make -j$(nproc)    make installelse    echo &quot;PCRE 已编译，跳过...&quot;fi# 编译 OpenRestyecho &quot;编译 OpenResty...&quot;cd &quot;$SOURCES_DIR/openresty-1.27.1.1&quot;./configure \\    --prefix=&quot;$INSTALL_DIR&quot; \\    --with-openssl=&quot;$SOURCES_DIR/openssl-3.4.0&quot; \\    --with-pcre=&quot;$SOURCES_DIR/pcre2-10.45&quot; \\    --add-module=&quot;$SOURCES_DIR/nginx_upstream_check_module-0.4.0&quot; \\    --add-module=&quot;$SOURCES_DIR/nginx-module-vts&quot; \\    --with-pcre-jit \\    --with-stream \\    --with-stream_ssl_module \\    --with-stream_ssl_preread_module \\    --with-http_v2_module \\    --with-http_v3_module \\    --without-mail_pop3_module \\    --without-mail_imap_module \\    --without-mail_smtp_module \\    --with-http_stub_status_module \\    --with-http_realip_module \\    --with-http_addition_module \\    --with-http_auth_request_module \\    --with-http_secure_link_module \\    --with-http_random_index_module \\    --with-http_gzip_static_module \\    --with-http_sub_module \\    --with-http_dav_module \\    --with-http_flv_module \\    --with-http_mp4_module \\    --with-http_slice_module \\    --with-http_gunzip_module \\    --with-threads \\    --with-stream \\    --without-pcre2 \\    --with-http_ssl_modulemake -j$(nproc)make installecho &quot;OpenResty 编译完成，安装路径: $INSTALL_DIR&quot;\n\n\n\n具体的代码见此仓库\nhttps://github.com/1416018124/openresty-build.git\n","dateCreated":"2025-02-10T23:33:00+08:00","dateModified":"2025-02-24T23:02:18+08:00","datePublished":"2025-02-10T23:33:00+08:00","description":"从今天开始，介绍一下OPenresty Lua开发以及运维的介绍，能做到快速的功能开发和调优","headline":"Openresty框架开发-代码准备","image":["image-1.png","image-2.png"],"mainEntityOfPage":{"@type":"WebPage","@id":"https://1416018124.github.io/Openresty%E6%A1%86%E6%9E%B6%E5%BC%80%E5%8F%91-%E4%BB%A3%E7%A0%81%E5%87%86%E5%A4%87/"},"publisher":{"@type":"Organization","name":"Jiang Feng","sameAs":["https://github.com/1416018124"]},"url":"https://1416018124.github.io/Openresty%E6%A1%86%E6%9E%B6%E5%BC%80%E5%8F%91-%E4%BB%A3%E7%A0%81%E5%87%86%E5%A4%87/","keywords":"openresty","thumbnailUrl":"image-1.png"}</script>
+    <meta name="description" content="从今天开始，介绍一下OPenresty Lua开发以及运维的介绍，能做到快速的功能开发和调优">
+<meta property="og:type" content="blog">
+<meta property="og:title" content="Openresty框架开发-代码准备">
+<meta property="og:url" content="https://1416018124.github.io/Openresty%E6%A1%86%E6%9E%B6%E5%BC%80%E5%8F%91-%E4%BB%A3%E7%A0%81%E5%87%86%E5%A4%87/index.html">
+<meta property="og:site_name" content="Hexo">
+<meta property="og:description" content="从今天开始，介绍一下OPenresty Lua开发以及运维的介绍，能做到快速的功能开发和调优">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2025-02-10T15:33:00.000Z">
+<meta property="article:modified_time" content="2025-02-24T15:02:18.384Z">
+<meta property="article:author" content="Jiang Feng">
+<meta property="article:tag" content="openresty">
+<meta name="twitter:card" content="summary">
+    
+    
+        
+    
+    
+    
+        <meta property="og:image" content="https://1416018124.github.io/Openresty%E6%A1%86%E6%9E%B6%E5%BC%80%E5%8F%91-%E4%BB%A3%E7%A0%81%E5%87%86%E5%A4%87/image-1.png"/>
+        <meta class="swiftype" name="image" data-type="enum" content="https://1416018124.github.io/Openresty%E6%A1%86%E6%9E%B6%E5%BC%80%E5%8F%91-%E4%BB%A3%E7%A0%81%E5%87%86%E5%A4%87/image-1.png"/>
+    
+    
+        <meta property="og:image" content="https://1416018124.github.io/Openresty%E6%A1%86%E6%9E%B6%E5%BC%80%E5%8F%91-%E4%BB%A3%E7%A0%81%E5%87%86%E5%A4%87/image-2.png"/>
+        <meta class="swiftype" name="image" data-type="enum" content="https://1416018124.github.io/Openresty%E6%A1%86%E6%9E%B6%E5%BC%80%E5%8F%91-%E4%BB%A3%E7%A0%81%E5%87%86%E5%A4%87/image-2.png"/>
+    
+    
+    <!--STYLES-->
+    
+<link rel="stylesheet" href="/assets/css/style-xvfnj2o9xv19zzpzzydweqhvegynmqvndecmgp9x1tqnkjmbbtwsdcdaxggz.min.css">
+
+    <!--STYLES END-->
+    
+
+    
+
+    
+</head>
+
+    <body>
+        <div id="blog">
+            <!-- Define author's picture -->
+
+
+    
+
+<header id="header" data-behavior="4">
+    <i id="btn-open-sidebar" class="fa fa-lg fa-bars"></i>
+    <div class="header-title">
+        <a
+            class="header-title-link"
+            href="/"
+            aria-label=""
+        >
+            Hexo
+        </a>
+    </div>
+    
+        
+            <a
+                class="header-right-picture "
+                href="#about"
+                aria-label="打开链接: /#about"
+            >
+        
+        
+        </a>
+    
+</header>
+
+            <!-- Define author's picture -->
+
+
+<nav id="sidebar" data-behavior="4">
+    <div class="sidebar-container">
+        
+        
+            <ul class="sidebar-buttons">
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/"
+                            
+                            rel="noopener"
+                            title="首页"
+                        >
+                        <i class="sidebar-button-icon fa fa-home" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">首页</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/all-categories"
+                            
+                            rel="noopener"
+                            title="分类"
+                        >
+                        <i class="sidebar-button-icon fa fa-bookmark" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">分类</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/all-tags"
+                            
+                            rel="noopener"
+                            title="标签"
+                        >
+                        <i class="sidebar-button-icon fa fa-tags" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">标签</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/all-archives"
+                            
+                            rel="noopener"
+                            title="归档"
+                        >
+                        <i class="sidebar-button-icon fa fa-archive" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">归档</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link open-algolia-search"
+                            href="#search"
+                            
+                            rel="noopener"
+                            title="搜索"
+                        >
+                        <i class="sidebar-button-icon fa fa-search" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">搜索</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="#about"
+                            
+                            rel="noopener"
+                            title="关于"
+                        >
+                        <i class="sidebar-button-icon fa fa-question" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">关于</span>
+                    </a>
+            </li>
+            
+        </ul>
+        
+            <ul class="sidebar-buttons">
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="https://github.com/1416018124"
+                            
+                                target="_blank"
+                            
+                            rel="noopener"
+                            title="GitHub"
+                        >
+                        <i class="sidebar-button-icon fab fa-github" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">GitHub</span>
+                    </a>
+            </li>
+            
+        </ul>
+        
+    </div>
+</nav>
+
+            
+        <div class="post-header-cover
+                    text-center
+                    post-header-cover--full"
+             style="background-image:url('/Openresty%E6%A1%86%E6%9E%B6%E5%BC%80%E5%8F%91-%E4%BB%A3%E7%A0%81%E5%87%86%E5%A4%87/image-2.png');"
+             data-behavior="4">
+            
+        </div>
+
+            <div id="main" data-behavior="4"
+                 class="hasCover
+                        hasCoverMetaOut
+                        hasCoverCaption">
+                
+<article class="post">
+    
+        <span class="post-header-cover-caption caption">A beautiful sunrise</span>
+    
+    
+        <div class="post-header main-content-wrap text-center">
+    
+        <h1 class="post-title">
+            Openresty框架开发-代码准备
+        </h1>
+    
+    
+</div>
+
+    
+    <div class="post-content markdown">
+        <div class="main-content-wrap">
+            <p>从今天开始，介绍一下OPenresty Lua开发以及运维的介绍，能做到快速的功能开发和调优</p>
+<span id="more"></span>
+
+<h1 id="1-代码准备"><a href="#1-代码准备" class="headerlink" title="1.代码准备"></a>1.代码准备</h1><p>安装到最新版本Openresty的方式有两种，源码编译安装和使用包管理器安装，这里主要介绍一下源码安装。</p>
+<h2 id="1-1-使用包管理器安装"><a href="#1-1-使用包管理器安装" class="headerlink" title="1.1 使用包管理器安装"></a>1.1 使用包管理器安装</h2><p>Centos 部署命令如下:</p>
+<figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">创建一个新的 YUM 仓库文件 openresty.repo</span></span><br><span class="line">sudo tee /etc/yum.repos.d/openresty.repo &lt;&lt; EOF</span><br><span class="line">[openresty]</span><br><span class="line">name=Official OpenResty Repository</span><br><span class="line">baseurl=https://openresty.org/package/centos/\$releasever/\$basearch</span><br><span class="line">enabled=1</span><br><span class="line">gpgcheck=1</span><br><span class="line">gpgkey=https://openresty.org/package/pubkey.gpg</span><br><span class="line">EOF</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">安装</span></span><br><span class="line">sudo yum install openresty</span><br></pre></td></tr></table></figure>
+
+<p>Debian Ubuntu 安装如下：</p>
+<figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">导入 GPG 密钥</span></span><br><span class="line">wget -qO - https://openresty.org/package/pubkey.gpg | sudo apt-key add -</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">添加 OpenResty 仓库</span></span><br><span class="line">echo &quot;deb http://openresty.org/package/ubuntu $(lsb_release -sc) main&quot; | sudo tee /etc/apt/sources.list.d/openresty.list</span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">更新 APT 包索引</span></span><br><span class="line">sudo apt-get update</span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash">安装 OpenResty</span></span><br><span class="line">sudo apt-get install openresty</span><br></pre></td></tr></table></figure>
+
+
+
+<h2 id="1-2-源码编译安装"><a href="#1-2-源码编译安装" class="headerlink" title="1.2 源码编译安装"></a>1.2 源码编译安装</h2><p>使用上面的apt命令安装虽然比较方便，但是会出现nginx缺少一些模块的情况发生，比如最长使用的vts模块，ngx_http_upstream_check_module ..等等，这时就需要我们使用源码来进行编译了。</p>
+<h3 id="1-2-1-核心依赖介绍"><a href="#1-2-1-核心依赖介绍" class="headerlink" title="1.2.1 核心依赖介绍"></a>1.2.1 核心依赖介绍</h3><p>OpenResty 源码编译的核心依赖包括：</p>
+<ul>
+<li>OpenSSL（用于 HTTPS 和加密）</li>
+<li>PCRE（用于正则表达式）</li>
+<li>zlib（用于 Gzip 压缩）</li>
+</ul>
+<p>其他的一些常用模块</p>
+<ul>
+<li>nginx-module-vts (实时监控 Nginx 的虚拟主机流量状态)</li>
+<li>ngx_http_upstream_check_module (上游服务器进行主动健康检查)</li>
+</ul>
+<p>想要在一个脚本里进行编译安装，此时就需要设计一下目录结构以及脚本编写。</p>
+<p>规划目录结构</p>
+<figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line">~/openresty-build/</span><br><span class="line">├── sources/               # 存放所有源码</span><br><span class="line">│   ├── openresty/         # OpenResty 源码</span><br><span class="line">│   ├── openssl/           # OpenSSL 源码</span><br><span class="line">│   ├── pcre/              # PCRE 源码</span><br><span class="line">│   └── ngx_http_upstream_check_module/  # upstream_check 模块源码</span><br><span class="line">├── build/                 # 编译输出目录</span><br><span class="line">│   ├── openresty/         # OpenResty 编译结果</span><br><span class="line">│   ├── openssl/           # OpenSSL 编译结果</span><br><span class="line">│   └── pcre/              # PCRE 编译结果</span><br><span class="line">└── install/               # 最终安装目录</span><br></pre></td></tr></table></figure>
+
+
+
+<p>依赖安装如下：</p>
+<figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">apt-get install make gcc zlib1g-dev</span><br></pre></td></tr></table></figure>
+
+
+
+<p>ngx_http_upstream_check_module 需要打补丁才能使用</p>
+<figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">进入 OpenResty 中 Nginx 源码目录</span></span><br><span class="line">cd /root/openresty-build/sources/openresty-1.27.1.1/build/nginx-1.27.1</span><br><span class="line">patch -p1 &lt; /root/openresty-build/sources/nginx_upstream_check_module-0.4.0/check_1.20.1+.patch</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+
+
+
+
+<p>安装脚本如下：</p>
+<figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br><span class="line">69</span><br><span class="line">70</span><br><span class="line">71</span><br><span class="line">72</span><br><span class="line">73</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash">!/bin/bash</span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">基础目录</span></span><br><span class="line">BASE_DIR=$(pwd)</span><br><span class="line">SOURCES_DIR=&quot;$BASE_DIR/sources&quot;</span><br><span class="line">BUILD_DIR=&quot;$BASE_DIR/build&quot;</span><br><span class="line">INSTALL_DIR=&quot;$BASE_DIR/install&quot;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">创建目录</span></span><br><span class="line">mkdir -p &quot;$BUILD_DIR&quot; &quot;$INSTALL_DIR&quot;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="comment"># 判断 OpenSSL 是否需要编译</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="keyword">if</span> [ ! -d <span class="string">&quot;<span class="variable">$BUILD_DIR</span>/openssl/lib64&quot;</span> ]; <span class="keyword">then</span></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">   <span class="built_in">echo</span> <span class="string">&quot;编译 OpenSSL...&quot;</span></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">   <span class="built_in">cd</span> <span class="string">&quot;<span class="variable">$SOURCES_DIR</span>/openssl-3.4.0&quot;</span></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">   ./config --prefix=<span class="string">&quot;<span class="variable">$BUILD_DIR</span>/openssl&quot;</span> --openssldir=<span class="string">&quot;<span class="variable">$BUILD_DIR</span>/openssl&quot;</span></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">   make -j$(<span class="built_in">nproc</span>)</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">   make install</span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="keyword">else</span></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">   <span class="built_in">echo</span> <span class="string">&quot;OpenSSL 已编译，跳过...&quot;</span></span></span><br><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="keyword">fi</span></span></span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">判断 PCRE 是否需要编译</span></span><br><span class="line">if [ ! -d &quot;$BUILD_DIR/pcre/lib&quot; ]; then</span><br><span class="line">    echo &quot;编译 PCRE...&quot;</span><br><span class="line">    cd &quot;$SOURCES_DIR/pcre2-10.45&quot;</span><br><span class="line">    ./configure --prefix=&quot;$BUILD_DIR/pcre&quot;</span><br><span class="line">    make -j$(nproc)</span><br><span class="line">    make install</span><br><span class="line">else</span><br><span class="line">    echo &quot;PCRE 已编译，跳过...&quot;</span><br><span class="line">fi</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">编译 OpenResty</span></span><br><span class="line">echo &quot;编译 OpenResty...&quot;</span><br><span class="line">cd &quot;$SOURCES_DIR/openresty-1.27.1.1&quot;</span><br><span class="line">./configure \</span><br><span class="line">    --prefix=&quot;$INSTALL_DIR&quot; \</span><br><span class="line">    --with-openssl=&quot;$SOURCES_DIR/openssl-3.4.0&quot; \</span><br><span class="line">    --with-pcre=&quot;$SOURCES_DIR/pcre2-10.45&quot; \</span><br><span class="line">    --add-module=&quot;$SOURCES_DIR/nginx_upstream_check_module-0.4.0&quot; \</span><br><span class="line">    --add-module=&quot;$SOURCES_DIR/nginx-module-vts&quot; \</span><br><span class="line">    --with-pcre-jit \</span><br><span class="line">    --with-stream \</span><br><span class="line">    --with-stream_ssl_module \</span><br><span class="line">    --with-stream_ssl_preread_module \</span><br><span class="line">    --with-http_v2_module \</span><br><span class="line">    --with-http_v3_module \</span><br><span class="line">    --without-mail_pop3_module \</span><br><span class="line">    --without-mail_imap_module \</span><br><span class="line">    --without-mail_smtp_module \</span><br><span class="line">    --with-http_stub_status_module \</span><br><span class="line">    --with-http_realip_module \</span><br><span class="line">    --with-http_addition_module \</span><br><span class="line">    --with-http_auth_request_module \</span><br><span class="line">    --with-http_secure_link_module \</span><br><span class="line">    --with-http_random_index_module \</span><br><span class="line">    --with-http_gzip_static_module \</span><br><span class="line">    --with-http_sub_module \</span><br><span class="line">    --with-http_dav_module \</span><br><span class="line">    --with-http_flv_module \</span><br><span class="line">    --with-http_mp4_module \</span><br><span class="line">    --with-http_slice_module \</span><br><span class="line">    --with-http_gunzip_module \</span><br><span class="line">    --with-threads \</span><br><span class="line">    --with-stream \</span><br><span class="line">    --without-pcre2 \</span><br><span class="line">    --with-http_ssl_module</span><br><span class="line"></span><br><span class="line">make -j$(nproc)</span><br><span class="line">make install</span><br><span class="line"></span><br><span class="line">echo &quot;OpenResty 编译完成，安装路径: $INSTALL_DIR&quot;</span><br></pre></td></tr></table></figure>
+
+
+
+<p>具体的代码见此仓库</p>
+<p><a target="_blank" rel="noopener" href="https://github.com/1416018124/openresty-build.git">https://github.com/1416018124/openresty-build.git</a></p>
+
+            
+
+
+        </div>
+    </div>
+    <div id="post-footer" class="post-footer main-content-wrap">
+        
+            <div class="post-footer-tags">
+                <span class="text-color-light text-small">标签</span><br/>
+                
+    <a class="tag tag--primary tag--small t-none-link" href="/tags/openresty/" rel="tag">openresty</a>
+
+            </div>
+        
+        
+        
+    </div>
+</article>
+
+
+
+                <footer id="footer" class="main-content-wrap">
+    <span class="copyrights">
+        Copyrights &copy; 2025 Jiang Feng. All Rights Reserved.
+    </span>
+</footer>
+
+            </div>
+            
+        </div>
+        
+
+
+<div id="about">
+    <div id="about-card">
+        <div id="about-btn-close">
+            <i class="fa fa-times"></i>
+        </div>
+        
+            <h4 id="about-card-name">Jiang Feng</h4>
+        
+            <div id="about-card-bio"><p>author.bio</p>
+</div>
+        
+        
+            <div id="about-card-job">
+                <i class="fa fa-briefcase"></i>
+                <br/>
+                <p>author.job</p>
+
+            </div>
+        
+        
+    </div>
+</div>
+
+        
+        
+<div id="cover" style="background-image:url('/assets/images/cover.jpg');"></div>
+        <!--SCRIPTS-->
+
+<script src="/assets/js/script-p2ssgnbftin4xedccxbuog4edl9jkt5x6ei7phvwevjlrkkr0xvvl08iwpyl.min.js"></script>
+
+<!--SCRIPTS END-->
+
+
+
+
+
+    </body>
+</html>

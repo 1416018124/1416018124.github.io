@@ -1,0 +1,346 @@
+
+<!DOCTYPE html>
+<html lang="zh-cn">
+    
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="generator" content="Hexo">
+    <title>gitlab-hrabor部署 - Hexo</title>
+    <meta name="author" content="Jiang Feng">
+    
+        <meta name="keywords" content="javascript,hexo">
+    
+    
+    
+    <script type="application/ld+json">{"@context":"http://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Jiang Feng","sameAs":["https://github.com/1416018124"]},"articleBody":"背景：\nk8s部署完毕后，此时还需要一个代码存储的服务和镜像存储的服务才能更加便捷的工作和学习。\n常见的代码存储服务主要有gitlab-ce、gitlab-ee、gerrit，本次选择gitlab-ce部署，也就是gitlab的社区版。\n常见的镜像制品存储的服务有Harbor、Artifactory，本次选择的是Harbor。\n存储服务使用之前部署的longhorn。\n\n\nGitlab部署ps:由于是个人使用，就使用了默认的大小，这个可以根据需求定制。\ngitlab默认会部署Cert-Manager，而我在部署rancher的时候已经独立部署过了，因此需要做下特殊的部署\n在Longhorn 上添加添加磁盘，本次使用的是filesystem，没有使用块存储的原因是块存储会出现如下报错，长时间查询也没有好的解决办法。\n12Warning  FailedAttachVolume  75s (x6 over 11m)  attachdetach-controller  AttachVolume.Attach failed for volume &quot;pvc-3ae836ad-93f7-42a8-824a- ││ 082b370a2d21&quot; : rpc error: code = Aborted desc = volume pvc-3ae836ad-93f7-42a8-824a-082b370a2d21 is not ready for workloads\n\nHelm安装命令12345678910111213141516171819202122helm repo add gitlab https://charts.gitlab.iohelm upgrade --install gitlab gitlab/gitlab \\  --namespace=gitlab \\  --create-namespace \\  --timeout 600s \\  --set global.edition=ce \\  --set gitlab-runner.install=false \\  --set global.hosts.domain=fengzhigu.cloud \\  --set certmanager-issuer.email=15176921657@163.com \\  --set global.ingress.tls.secretName=fengzhigu-tls \\  --set global.storageClass=longhorn \\  --set gitlab.gitaly.persistence.storageClass=longhorn \\  --set gitlab.registry.persistence.storageClass=longhorn \\  --set gitlab.minio.persistence.storageClass=longhorn \\  --set postgresql.persistence.storageClass=longhorn \\  --set redis.persistence.storageClass=longhorn \\  --set certmanager.install=false \\  --set global.ingress.tls.enabled=false \\  --set global.ingress.configureCertmanager=false \\  --set nginx-ingress.controller.extraArgs.enable-ssl-passthrough=&quot;&quot; \\  --set nginx-ingress.controller.extraArgs.ssl-redirect=&quot;false&quot;\n\n\n\n\n查看gitlab 默认的root密码1kubectl -n gitlab get secret gitlab-gitlab-initial-root-password -ojsonpath=&#x27;&#123;.data.password&#125;&#x27; | base64 --decode ; echo\n\n\n\n可能会出现的问题\n由于我把k3s默认的ingress 服务Traefik 给删除了，出现了ssh无法连接到k8s集群的情况，出现这种情况后，我把service 中 gitlab-nginx-ingress-controller 这个svc改了下类型，由原先的LB改成了clusterIP解决。\n\nHarbor部署由于Harbor这种制品的重要程度比较低，数据量比较大，因此使用单副本的形式部署。\n创建一个单副本的sc12345678910111213141516# cat longhorn-no-replica-sc.yamlapiVersion: storage.k8s.io/v1kind: StorageClassmetadata:  name: longhorn-no-replica  # StorageClass 的名称，可按需修改provisioner: driver.longhorn.ioparameters:  numberOfReplicas: &quot;1&quot;  # 设置副本数为 1，即无副本（除自身外无额外副本）  staleReplicaTimeout: &quot;30&quot;  # 陈旧副本超时时间，单位为分钟  fromBackup: &quot;&quot;  fsType: ext4  # 文件系统类型reclaimPolicy: Delete  # 回收策略，当 PVC 删除时，PV 也会被删除volumeBindingMode: Immediate  # 卷绑定模式allowVolumeExpansion: true  # 允许卷扩容# kubectl get storageclass longhorn-no-replica\n\n\n\nHelm部署Harbor123456789101112131415161718192021222324252627282930313233# kubectl create namespace harbor# cat harbor-values.yamlpersistence:  enabled: true  resourcePolicy: &quot;keep&quot;  persistentVolumeClaim:    registry:      storageClass: longhorn-no-replica      accessMode: ReadWriteOnce      size: 100Gi    chartmuseum:      storageClass: longhorn-no-replica      accessMode: ReadWriteOnce      size: 10Gi    jobservice:      storageClass: longhorn-no-replica      accessMode: ReadWriteOnce      size: 5Gi    database:      storageClass: longhorn-no-replica      accessMode: ReadWriteOnce      size: 10Gi    redis:      storageClass: longhorn-no-replica      accessMode: ReadWriteOnce      size: 5Gi    trivy:      storageClass: longhorn-no-replica      accessMode: ReadWriteOnce      size: 10GiexternalURL: &quot;https://harbor.fengzhigu.cloud&quot;# helm install harbor harbor/harbor -n harbor -f harbor-values.yaml\n\n\n\n配置一个ingress来对外提供服务.\n12345678910111213141516171819202122232425262728293031323334353637383940414243444546474849505152535455565758596061626364656667#cat harbor-ingress.yamlapiVersion: networking.k8s.io/v1kind: Ingressmetadata:  annotations:    kubernetes.io/ingress.class: nginx    nginx.ingress.kubernetes.io/proxy-body-size: &quot;0&quot;    nginx.ingress.kubernetes.io/proxy-read-timeout: &quot;600&quot;    nginx.ingress.kubernetes.io/proxy-send-timeout: &quot;600&quot;    nginx.ingress.kubernetes.io/ssl-redirect: &quot;true&quot;  name: harbor-ningress  namespace: harborspec:  rules:  - host: harbor.fengzhigu.cloud    http:      paths:      - backend:          service:            name: harbor-portal            port:              number: 80        path: /        pathType: Prefix      - backend:          service:            name: harbor-registry            port:              number: 80        path: /v2        pathType: Prefix      - backend:          service:            name: harbor-core            port:              number: 80        path: /service        pathType: Prefix      - backend:          service:            name: harbor-core            port:              number: 80        path: /c        pathType: Prefix      - backend:          service:            name: harbor-core            port:              number: 80        path: /api        pathType: Prefix      - backend:          service:            name: harbor-core            port:              number: 80        path: /chartrepo        pathType: Prefix  tls:  - hosts:    - harbor.fengzhigu.cloud    secretName: fengzhigu-tlsstatus:  loadBalancer:    ingress:    - ip: 10.43.133.153\n\n","dateCreated":"2025-01-23T23:18:18+08:00","dateModified":"2025-01-27T19:11:53+08:00","datePublished":"2025-01-23T23:18:18+08:00","description":"背景：\nk8s部署完毕后，此时还需要一个代码存储的服务和镜像存储的服务才能更加便捷的工作和学习。\n常见的代码存储服务主要有gitlab-ce、gitlab-ee、gerrit，本次选择gitlab-ce部署，也就是gitlab的社区版。\n常见的镜像制品存储的服务有Harbor、Artifactory，本次选择的是Harbor。\n存储服务使用之前部署的longhorn。","headline":"gitlab-hrabor部署","image":["image-1.png","image-2.png"],"mainEntityOfPage":{"@type":"WebPage","@id":"https://1416018124.github.io/gitlab-harbor%E9%83%A8%E7%BD%B2/"},"publisher":{"@type":"Organization","name":"Jiang Feng","sameAs":["https://github.com/1416018124"]},"url":"https://1416018124.github.io/gitlab-harbor%E9%83%A8%E7%BD%B2/","keywords":"k8s, 运维","thumbnailUrl":"image-1.png"}</script>
+    <meta name="description" content="背景： k8s部署完毕后，此时还需要一个代码存储的服务和镜像存储的服务才能更加便捷的工作和学习。 常见的代码存储服务主要有gitlab-ce、gitlab-ee、gerrit，本次选择gitlab-ce部署，也就是gitlab的社区版。 常见的镜像制品存储的服务有Harbor、Artifactory，本次选择的是Harbor。 存储服务使用之前部署的longhorn。">
+<meta property="og:type" content="blog">
+<meta property="og:title" content="gitlab-hrabor部署">
+<meta property="og:url" content="https://1416018124.github.io/gitlab-harbor%E9%83%A8%E7%BD%B2/index.html">
+<meta property="og:site_name" content="Hexo">
+<meta property="og:description" content="背景： k8s部署完毕后，此时还需要一个代码存储的服务和镜像存储的服务才能更加便捷的工作和学习。 常见的代码存储服务主要有gitlab-ce、gitlab-ee、gerrit，本次选择gitlab-ce部署，也就是gitlab的社区版。 常见的镜像制品存储的服务有Harbor、Artifactory，本次选择的是Harbor。 存储服务使用之前部署的longhorn。">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://1416018124.github.io/gitlab-harbor%E9%83%A8%E7%BD%B2/image-20250123233025429.png">
+<meta property="og:image" content="https://1416018124.github.io/gitlab-harbor%E9%83%A8%E7%BD%B2/image-20250127191146261.png">
+<meta property="article:published_time" content="2025-01-23T15:18:18.000Z">
+<meta property="article:modified_time" content="2025-01-27T11:11:53.863Z">
+<meta property="article:author" content="Jiang Feng">
+<meta property="article:tag" content="k8s">
+<meta property="article:tag" content="运维">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://1416018124.github.io/gitlab-harbor%E9%83%A8%E7%BD%B2/image-20250123233025429.png">
+    
+    
+        
+    
+    
+    
+        <meta property="og:image" content="https://1416018124.github.io/gitlab-harbor%E9%83%A8%E7%BD%B2/image-1.png"/>
+        <meta class="swiftype" name="image" data-type="enum" content="https://1416018124.github.io/gitlab-harbor%E9%83%A8%E7%BD%B2/image-1.png"/>
+    
+    
+        <meta property="og:image" content="https://1416018124.github.io/gitlab-harbor%E9%83%A8%E7%BD%B2/image-2.png"/>
+        <meta class="swiftype" name="image" data-type="enum" content="https://1416018124.github.io/gitlab-harbor%E9%83%A8%E7%BD%B2/image-2.png"/>
+    
+    
+    <!--STYLES-->
+    
+<link rel="stylesheet" href="/assets/css/style-xvfnj2o9xv19zzpzzydweqhvegynmqvndecmgp9x1tqnkjmbbtwsdcdaxggz.min.css">
+
+    <!--STYLES END-->
+    
+
+    
+
+    
+</head>
+
+    <body>
+        <div id="blog">
+            <!-- Define author's picture -->
+
+
+    
+
+<header id="header" data-behavior="4">
+    <i id="btn-open-sidebar" class="fa fa-lg fa-bars"></i>
+    <div class="header-title">
+        <a
+            class="header-title-link"
+            href="/"
+            aria-label=""
+        >
+            Hexo
+        </a>
+    </div>
+    
+        
+            <a
+                class="header-right-picture "
+                href="#about"
+                aria-label="打开链接: /#about"
+            >
+        
+        
+        </a>
+    
+</header>
+
+            <!-- Define author's picture -->
+
+
+<nav id="sidebar" data-behavior="4">
+    <div class="sidebar-container">
+        
+        
+            <ul class="sidebar-buttons">
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/"
+                            
+                            rel="noopener"
+                            title="首页"
+                        >
+                        <i class="sidebar-button-icon fa fa-home" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">首页</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/all-categories"
+                            
+                            rel="noopener"
+                            title="分类"
+                        >
+                        <i class="sidebar-button-icon fa fa-bookmark" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">分类</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/all-tags"
+                            
+                            rel="noopener"
+                            title="标签"
+                        >
+                        <i class="sidebar-button-icon fa fa-tags" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">标签</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/all-archives"
+                            
+                            rel="noopener"
+                            title="归档"
+                        >
+                        <i class="sidebar-button-icon fa fa-archive" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">归档</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link open-algolia-search"
+                            href="#search"
+                            
+                            rel="noopener"
+                            title="搜索"
+                        >
+                        <i class="sidebar-button-icon fa fa-search" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">搜索</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="#about"
+                            
+                            rel="noopener"
+                            title="关于"
+                        >
+                        <i class="sidebar-button-icon fa fa-question" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">关于</span>
+                    </a>
+            </li>
+            
+        </ul>
+        
+            <ul class="sidebar-buttons">
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="https://github.com/1416018124"
+                            
+                                target="_blank"
+                            
+                            rel="noopener"
+                            title="GitHub"
+                        >
+                        <i class="sidebar-button-icon fab fa-github" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">GitHub</span>
+                    </a>
+            </li>
+            
+        </ul>
+        
+    </div>
+</nav>
+
+            
+        <div class="post-header-cover
+                    text-center
+                    post-header-cover--full"
+             style="background-image:url('/gitlab-harbor%E9%83%A8%E7%BD%B2/image-2.png');"
+             data-behavior="4">
+            
+        </div>
+
+            <div id="main" data-behavior="4"
+                 class="hasCover
+                        hasCoverMetaOut
+                        hasCoverCaption">
+                
+<article class="post">
+    
+        <span class="post-header-cover-caption caption">A beautiful sunrise</span>
+    
+    
+        <div class="post-header main-content-wrap text-center">
+    
+        <h1 class="post-title">
+            gitlab-hrabor部署
+        </h1>
+    
+    
+</div>
+
+    
+    <div class="post-content markdown">
+        <div class="main-content-wrap">
+            <p>背景：</p>
+<p>k8s部署完毕后，此时还需要一个代码存储的服务和镜像存储的服务才能更加便捷的工作和学习。</p>
+<p>常见的代码存储服务主要有gitlab-ce、gitlab-ee、gerrit，本次选择gitlab-ce部署，也就是gitlab的社区版。</p>
+<p>常见的镜像制品存储的服务有Harbor、Artifactory，本次选择的是Harbor。</p>
+<p>存储服务使用之前部署的longhorn。</p>
+<span id="more"></span>
+
+<h1 id="Gitlab部署"><a href="#Gitlab部署" class="headerlink" title="Gitlab部署"></a>Gitlab部署</h1><h2 id="ps"><a href="#ps" class="headerlink" title="ps:"></a>ps:</h2><p>由于是个人使用，就使用了默认的大小，这个可以根据需求定制。</p>
+<p>gitlab默认会部署Cert-Manager，而我在部署rancher的时候已经独立部署过了，因此需要做下特殊的部署</p>
+<p>在Longhorn 上添加添加磁盘，本次使用的是filesystem，没有使用块存储的原因是块存储会出现如下报错，长时间查询也没有好的解决办法。</p>
+<figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line">Warning  FailedAttachVolume  75s (x6 over 11m)  attachdetach-controller  AttachVolume.Attach failed for volume &quot;pvc-3ae836ad-93f7-42a8-824a- │</span><br><span class="line">│ 082b370a2d21&quot; : rpc error: code = Aborted desc = volume pvc-3ae836ad-93f7-42a8-824a-082b370a2d21 is not ready for workloads</span><br></pre></td></tr></table></figure>
+
+<h2 id="Helm安装命令"><a href="#Helm安装命令" class="headerlink" title="Helm安装命令"></a>Helm安装命令</h2><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br></pre></td><td class="code"><pre><span class="line">helm repo add gitlab https://charts.gitlab.io</span><br><span class="line">helm upgrade --install gitlab gitlab/gitlab \</span><br><span class="line">  --namespace=gitlab \</span><br><span class="line">  --create-namespace \</span><br><span class="line">  --timeout 600s \</span><br><span class="line">  --set global.edition=ce \</span><br><span class="line">  --set gitlab-runner.install=false \</span><br><span class="line">  --set global.hosts.domain=fengzhigu.cloud \</span><br><span class="line">  --set certmanager-issuer.email=15176921657@163.com \</span><br><span class="line">  --set global.ingress.tls.secretName=fengzhigu-tls \</span><br><span class="line">  --set global.storageClass=longhorn \</span><br><span class="line">  --set gitlab.gitaly.persistence.storageClass=longhorn \</span><br><span class="line">  --set gitlab.registry.persistence.storageClass=longhorn \</span><br><span class="line">  --set gitlab.minio.persistence.storageClass=longhorn \</span><br><span class="line">  --set postgresql.persistence.storageClass=longhorn \</span><br><span class="line">  --set redis.persistence.storageClass=longhorn \</span><br><span class="line">  --set certmanager.install=false \</span><br><span class="line">  --set global.ingress.tls.enabled=false \</span><br><span class="line">  --set global.ingress.configureCertmanager=false \</span><br><span class="line">  --set nginx-ingress.controller.extraArgs.enable-ssl-passthrough=&quot;&quot; \</span><br><span class="line">  --set nginx-ingress.controller.extraArgs.ssl-redirect=&quot;false&quot;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+
+
+<p><img src="/gitlab-harbor%E9%83%A8%E7%BD%B2/image-20250123233025429.png" alt="image-20250123233025429"></p>
+<h2 id="查看gitlab-默认的root密码"><a href="#查看gitlab-默认的root密码" class="headerlink" title="查看gitlab 默认的root密码"></a>查看gitlab 默认的root密码</h2><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">kubectl -n gitlab get secret gitlab-gitlab-initial-root-password -ojsonpath=&#x27;&#123;.data.password&#125;&#x27; | base64 --decode ; echo</span><br></pre></td></tr></table></figure>
+
+
+
+<p>可能会出现的问题</p>
+<p>由于我把k3s默认的ingress 服务<strong>Traefik</strong> 给删除了，出现了ssh无法连接到k8s集群的情况，出现这种情况后，我把service 中 <code>gitlab-nginx-ingress-controller</code> 这个svc改了下类型，由原先的LB改成了clusterIP解决。</p>
+<p><img src="/gitlab-harbor%E9%83%A8%E7%BD%B2/image-20250127191146261.png" alt="image-20250127191146261"></p>
+<h1 id="Harbor部署"><a href="#Harbor部署" class="headerlink" title="Harbor部署"></a>Harbor部署</h1><p>由于Harbor这种制品的重要程度比较低，数据量比较大，因此使用单副本的形式部署。</p>
+<h2 id="创建一个单副本的sc"><a href="#创建一个单副本的sc" class="headerlink" title="创建一个单副本的sc"></a>创建一个单副本的sc</h2><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> longhorn-no-replica-sc.yaml</span></span><br><span class="line">apiVersion: storage.k8s.io/v1</span><br><span class="line">kind: StorageClass</span><br><span class="line">metadata:</span><br><span class="line">  name: longhorn-no-replica  # StorageClass 的名称，可按需修改</span><br><span class="line">provisioner: driver.longhorn.io</span><br><span class="line">parameters:</span><br><span class="line">  numberOfReplicas: &quot;1&quot;  # 设置副本数为 1，即无副本（除自身外无额外副本）</span><br><span class="line">  staleReplicaTimeout: &quot;30&quot;  # 陈旧副本超时时间，单位为分钟</span><br><span class="line">  fromBackup: &quot;&quot;</span><br><span class="line">  fsType: ext4  # 文件系统类型</span><br><span class="line">reclaimPolicy: Delete  # 回收策略，当 PVC 删除时，PV 也会被删除</span><br><span class="line">volumeBindingMode: Immediate  # 卷绑定模式</span><br><span class="line">allowVolumeExpansion: true  # 允许卷扩容</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">kubectl get storageclass longhorn-no-replica</span></span><br></pre></td></tr></table></figure>
+
+
+
+<h2 id="Helm部署Harbor"><a href="#Helm部署Harbor" class="headerlink" title="Helm部署Harbor"></a>Helm部署Harbor</h2><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta prompt_"># </span><span class="language-bash">kubectl create namespace harbor</span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash"><span class="built_in">cat</span> harbor-values.yaml</span></span><br><span class="line">persistence:</span><br><span class="line">  enabled: true</span><br><span class="line">  resourcePolicy: &quot;keep&quot;</span><br><span class="line">  persistentVolumeClaim:</span><br><span class="line">    registry:</span><br><span class="line">      storageClass: longhorn-no-replica</span><br><span class="line">      accessMode: ReadWriteOnce</span><br><span class="line">      size: 100Gi</span><br><span class="line">    chartmuseum:</span><br><span class="line">      storageClass: longhorn-no-replica</span><br><span class="line">      accessMode: ReadWriteOnce</span><br><span class="line">      size: 10Gi</span><br><span class="line">    jobservice:</span><br><span class="line">      storageClass: longhorn-no-replica</span><br><span class="line">      accessMode: ReadWriteOnce</span><br><span class="line">      size: 5Gi</span><br><span class="line">    database:</span><br><span class="line">      storageClass: longhorn-no-replica</span><br><span class="line">      accessMode: ReadWriteOnce</span><br><span class="line">      size: 10Gi</span><br><span class="line">    redis:</span><br><span class="line">      storageClass: longhorn-no-replica</span><br><span class="line">      accessMode: ReadWriteOnce</span><br><span class="line">      size: 5Gi</span><br><span class="line">    trivy:</span><br><span class="line">      storageClass: longhorn-no-replica</span><br><span class="line">      accessMode: ReadWriteOnce</span><br><span class="line">      size: 10Gi</span><br><span class="line">externalURL: &quot;https://harbor.fengzhigu.cloud&quot;</span><br><span class="line"><span class="meta prompt_"></span></span><br><span class="line"><span class="meta prompt_"># </span><span class="language-bash">helm install harbor harbor/harbor -n harbor -f harbor-values.yaml</span></span><br></pre></td></tr></table></figure>
+
+
+
+<p>配置一个ingress来对外提供服务.</p>
+<figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br></pre></td><td class="code"><pre><span class="line"><span class="meta prompt_">#</span><span class="language-bash"><span class="built_in">cat</span> harbor-ingress.yaml</span></span><br><span class="line">apiVersion: networking.k8s.io/v1</span><br><span class="line">kind: Ingress</span><br><span class="line">metadata:</span><br><span class="line">  annotations:</span><br><span class="line">    kubernetes.io/ingress.class: nginx</span><br><span class="line">    nginx.ingress.kubernetes.io/proxy-body-size: &quot;0&quot;</span><br><span class="line">    nginx.ingress.kubernetes.io/proxy-read-timeout: &quot;600&quot;</span><br><span class="line">    nginx.ingress.kubernetes.io/proxy-send-timeout: &quot;600&quot;</span><br><span class="line">    nginx.ingress.kubernetes.io/ssl-redirect: &quot;true&quot;</span><br><span class="line">  name: harbor-ningress</span><br><span class="line">  namespace: harbor</span><br><span class="line">spec:</span><br><span class="line">  rules:</span><br><span class="line">  - host: harbor.fengzhigu.cloud</span><br><span class="line">    http:</span><br><span class="line">      paths:</span><br><span class="line">      - backend:</span><br><span class="line">          service:</span><br><span class="line">            name: harbor-portal</span><br><span class="line">            port:</span><br><span class="line">              number: 80</span><br><span class="line">        path: /</span><br><span class="line">        pathType: Prefix</span><br><span class="line">      - backend:</span><br><span class="line">          service:</span><br><span class="line">            name: harbor-registry</span><br><span class="line">            port:</span><br><span class="line">              number: 80</span><br><span class="line">        path: /v2</span><br><span class="line">        pathType: Prefix</span><br><span class="line">      - backend:</span><br><span class="line">          service:</span><br><span class="line">            name: harbor-core</span><br><span class="line">            port:</span><br><span class="line">              number: 80</span><br><span class="line">        path: /service</span><br><span class="line">        pathType: Prefix</span><br><span class="line">      - backend:</span><br><span class="line">          service:</span><br><span class="line">            name: harbor-core</span><br><span class="line">            port:</span><br><span class="line">              number: 80</span><br><span class="line">        path: /c</span><br><span class="line">        pathType: Prefix</span><br><span class="line">      - backend:</span><br><span class="line">          service:</span><br><span class="line">            name: harbor-core</span><br><span class="line">            port:</span><br><span class="line">              number: 80</span><br><span class="line">        path: /api</span><br><span class="line">        pathType: Prefix</span><br><span class="line">      - backend:</span><br><span class="line">          service:</span><br><span class="line">            name: harbor-core</span><br><span class="line">            port:</span><br><span class="line">              number: 80</span><br><span class="line">        path: /chartrepo</span><br><span class="line">        pathType: Prefix</span><br><span class="line">  tls:</span><br><span class="line">  - hosts:</span><br><span class="line">    - harbor.fengzhigu.cloud</span><br><span class="line">    secretName: fengzhigu-tls</span><br><span class="line">status:</span><br><span class="line">  loadBalancer:</span><br><span class="line">    ingress:</span><br><span class="line">    - ip: 10.43.133.153</span><br></pre></td></tr></table></figure>
+
+
+            
+
+
+        </div>
+    </div>
+    <div id="post-footer" class="post-footer main-content-wrap">
+        
+            <div class="post-footer-tags">
+                <span class="text-color-light text-small">标签</span><br/>
+                
+    <a class="tag tag--primary tag--small t-none-link" href="/tags/k8s/" rel="tag">k8s</a> <a class="tag tag--primary tag--small t-none-link" href="/tags/%E8%BF%90%E7%BB%B4/" rel="tag">运维</a>
+
+            </div>
+        
+        
+        
+    </div>
+</article>
+
+
+
+                <footer id="footer" class="main-content-wrap">
+    <span class="copyrights">
+        Copyrights &copy; 2025 Jiang Feng. All Rights Reserved.
+    </span>
+</footer>
+
+            </div>
+            
+        </div>
+        
+
+
+<div id="about">
+    <div id="about-card">
+        <div id="about-btn-close">
+            <i class="fa fa-times"></i>
+        </div>
+        
+            <h4 id="about-card-name">Jiang Feng</h4>
+        
+            <div id="about-card-bio"><p>author.bio</p>
+</div>
+        
+        
+            <div id="about-card-job">
+                <i class="fa fa-briefcase"></i>
+                <br/>
+                <p>author.job</p>
+
+            </div>
+        
+        
+    </div>
+</div>
+
+        
+        
+<div id="cover" style="background-image:url('/assets/images/cover.jpg');"></div>
+        <!--SCRIPTS-->
+
+<script src="/assets/js/script-p2ssgnbftin4xedccxbuog4edl9jkt5x6ei7phvwevjlrkkr0xvvl08iwpyl.min.js"></script>
+
+<!--SCRIPTS END-->
+
+
+
+
+
+    </body>
+</html>
