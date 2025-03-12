@@ -1,0 +1,345 @@
+
+<!DOCTYPE html>
+<html lang="zh-cn">
+    
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="generator" content="Hexo">
+    <title>Openresty框架开发06-给域名添加配置 - Hexo</title>
+    <meta name="author" content="Jiang Feng">
+    
+        <meta name="keywords" content="OpenResty,框架设计,Lua">
+    
+    
+    
+    <script type="application/ld+json">{"@context":"http://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Jiang Feng","sameAs":["https://github.com/1416018124"]},"articleBody":"​\t在前面的教程中，我们有了框架、功能，此章节主要讲解一下如何给域名添加配置。\n\n\n\n域名配置文件在哪里定义\n在这个框架中，init_by_lua_file 会从其中读取一个名为default.conf 的配置文件，它的路径一般就是&#x2F;usr&#x2F;local&#x2F;openresty&#x2F;nginx&#x2F;conf&#x2F;路径下，它的格式如下：\n1234567891011121314&#123;    &quot;rule_conf_path&quot;: &quot;/usr/local/openresty/nginx/conf/lua.conf&quot;,    &quot;redis&quot;: &#123;        &quot;type&quot;: &quot;solo&quot;,        &quot;hosts&quot;: [            &#123;                &quot;host&quot;: &quot;127.0.0.1&quot;,                &quot;port&quot;: 6379            &#125;        ]    &#125;,    &quot;mmdb&quot;: &quot;/usr/local/openresty/GeoLite2-City.mmdb&quot;&#125;\n\n​\t可以看到域名的默认配置文件位置在/usr/local/openresty/nginx/conf/lua.conf\n\n这个配置文件如何编写配置\n\n​\t此文件是一个json格式，domain 写你要为哪个域名增加功能配置，注意这个域名必须要在server块里定义。\n​\t下面是一个配置的DEMO,还有一些其他的配置，这个后面再讲。\n1234567891011121314151617181920212223242526272829303132333435363738394041424344454647484950515253545556575859606162636465666768[    &#123;        &quot;domain&quot;: &quot;gitlab.fengzhigu.cloud&quot;,        &quot;basic&quot;: &#123;            &quot;service&quot;: &quot;gitlab&quot;,            &quot;ip_deny&quot;: true        &#125;,        &quot;connlimit&quot;: &#123;            &quot;limit_type&quot;: &quot;user&quot;,            &quot;limit_defalut_user&quot;: &quot;anonymous&quot;,            &quot;dry_run&quot;: false,            &quot;limit_common_on&quot;: true,            &quot;default_args&quot;: [                &#123;                    &quot;max&quot;: 3,                    &quot;limit_location&quot;: &quot;upload&quot;                &#125;,                &#123;                    &quot;max&quot;: 1,                    &quot;limit_location&quot;: &quot;download&quot;                &#125;,                &#123;                    &quot;max&quot;:1                &#125;            ],            &quot;limit_args&quot;: [                &#123;                    &quot;key&quot;: &quot;anonymous&quot;,                    &quot;max&quot;: 100,                    &quot;limit_location&quot;: &quot;upload&quot;                &#125;,                &#123;                    &quot;key&quot;: &quot;anonymous&quot;,                    &quot;max&quot;: 4,                    &quot;limit_location&quot;: &quot;download&quot;                &#125;            ]        &#125;,        &quot;reqlimit&quot;: &#123;            &quot;limit_type&quot;: &quot;user&quot;,            &quot;dry_run&quot;: false,            &quot;limit_default_user&quot;: &quot;anonymous&quot;,            &quot;limit_common_on&quot;: true,            &quot;default_args&quot;: [                &#123;                    &quot;rate&quot;: &quot;1r/s&quot;,                    &quot;limit_location&quot;: &quot;upload&quot;                &#125;,                &#123;                    &quot;rate&quot;: &quot;1r/s&quot;,                    &quot;limit_location&quot;: &quot;download&quot;                &#125;,                &#123;                    &quot;rate&quot;: &quot;1r/s&quot;                &#125;            ],            &quot;limit_args&quot;: [                &#123;                    &quot;key&quot;: &quot;anonymous&quot;,                    &quot;rate&quot;: &quot;100r/s&quot;,                    &quot;limit_location&quot;: &quot;upload&quot;                &#125;            ]        &#125;    &#125;]\n\n重点介绍一下次配置最上面的几个\n\ndomain: 它是作为redis的key，当用户请求过来时，会拿请求中的Host来去查内存中的值。\nbasic.service: 这个相当于一个标识符，告诉Openresty这个服务是什么，代码中会用它来拼接redis的key\nbasic.ip_deny: 是否开启黑白名单\n\n\n配置有了，如何开启\n\n​\t现在域名配置有了，此时我们需要再域名的server块中加载一下我们的主函数即可。\n12345678910111213141516171819202122232425262728upstream gitlab &#123;    server 10.43.23.227;&#125;server &#123;        listen 80 ;        server_name gitlab.fengzhigu.cloud;        access_log logs/gitlab_access.log http_access;        access_by_lua_file lua/access/access_main.lua;        root  html;        proxy_read_timeout      3600;        proxy_connect_timeout   300;        proxy_redirect          off;        proxy_http_version 1.1;        proxy_set_header Host $host;        proxy_set_header X-Real-IP $remote_addr;        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;        set $limit_location &#x27;&#x27;;        #proxy_set_header Upgrade $http_upgrade;        location /  &#123;            proxy_pass http://gitlab;            #return 404;        &#125;    &#125;\n\nlua&#x2F;access&#x2F;access_main.lua 是我们的限制访问主函数，正常情况下我们的限制会有多种多样的，比如请求数限制，连接数限制，请求速率限制、UA黑白名单等等，此时就可以在这个access_main.lua中调用其他的功能。\n123456789101112131415161718192021222324252627282930313233343536373839404142434445464748--[[http 请求 access_by_lua 入口函数在这里根据域名的lua.json,判断需要的功能，然后按需执行Author: Jiang FengDate: Mon Sep 30 11:17:38 AM CST 2024--]]local get_conf = require(&quot;get_conf&quot;)local function main()    --对于没有配置lua.conf的请求，默认跳过    if get_conf.get_domainconf(ngx.var.host) == nil then        return    end    local basic = get_conf.app(&quot;basic&quot;)    local service = basic.service or &quot;default&quot;    if basic.ip_deny == true then        -- IP黑白名单        local ip_deny = require(&quot;ip_deny&quot;)        local res = ip_deny.ip_rule(service)        if res then            local user = ngx.var.remote_user or &quot;none&quot;            local user_ip = ngx.var.remote_addr            ngx.log(ngx.ERR,                &quot;&#123;\\&quot;user\\&quot;: \\&quot;&quot; .. user .. &quot;\\&quot;, \\&quot;client_address\\&quot;: \\&quot;&quot; .. user_ip .. &quot;\\&quot;,\\&quot;err\\&quot;:\\&quot;ip_deny\\&quot;&#125;&quot;)            ngx.exit(403)        end    end    local reqlimitTable = get_conf.app(&quot;reqlimit&quot;)    if reqlimitTable then        -- 执行request limit        local reqlimit = require(&quot;reqlimit_logic&quot;)        reqlimit.req_limit_logic(reqlimitTable, service)    end    local connlimitTable = get_conf.app(&quot;connlimit&quot;)    if connlimitTable then        -- 执行connnect limit        local connlimit = require(&quot;connlimit_logic&quot;)        connlimit.conn_limit_logic(connlimitTable, service)    endendmain()\n\n\n\n\n\n\n\n参考案例：\nhttps://github.com/1416018124/openresty-build/tree/framework_design\n","dateCreated":"2025-03-12T22:05:00+08:00","dateModified":"2025-03-12T22:26:17+08:00","datePublished":"2025-03-12T22:05:00+08:00","description":"​\t在前面的教程中，我们有了框架、功能，此章节主要讲解一下如何给域名添加配置。","headline":"Openresty框架开发06-给域名添加配置","image":["image-1.png","image-2.png"],"mainEntityOfPage":{"@type":"WebPage","@id":"https://1416018124.github.io/Openresty%E6%A1%86%E6%9E%B6%E5%BC%80%E5%8F%9106-%E7%BB%99%E5%9F%9F%E5%90%8D%E6%B7%BB%E5%8A%A0%E9%85%8D%E7%BD%AE/"},"publisher":{"@type":"Organization","name":"Jiang Feng","sameAs":["https://github.com/1416018124"]},"url":"https://1416018124.github.io/Openresty%E6%A1%86%E6%9E%B6%E5%BC%80%E5%8F%9106-%E7%BB%99%E5%9F%9F%E5%90%8D%E6%B7%BB%E5%8A%A0%E9%85%8D%E7%BD%AE/","keywords":"openresty","thumbnailUrl":"image-1.png"}</script>
+    <meta name="description" content="​	在前面的教程中，我们有了框架、功能，此章节主要讲解一下如何给域名添加配置。">
+<meta property="og:type" content="blog">
+<meta property="og:title" content="Openresty框架开发06-给域名添加配置">
+<meta property="og:url" content="https://1416018124.github.io/Openresty%E6%A1%86%E6%9E%B6%E5%BC%80%E5%8F%9106-%E7%BB%99%E5%9F%9F%E5%90%8D%E6%B7%BB%E5%8A%A0%E9%85%8D%E7%BD%AE/index.html">
+<meta property="og:site_name" content="Hexo">
+<meta property="og:description" content="​	在前面的教程中，我们有了框架、功能，此章节主要讲解一下如何给域名添加配置。">
+<meta property="og:locale" content="zh_CN">
+<meta property="article:published_time" content="2025-03-12T14:05:00.000Z">
+<meta property="article:modified_time" content="2025-03-12T14:26:17.654Z">
+<meta property="article:author" content="Jiang Feng">
+<meta property="article:tag" content="openresty">
+<meta name="twitter:card" content="summary">
+    
+    
+        
+    
+    
+    
+        <meta property="og:image" content="https://1416018124.github.io/Openresty%E6%A1%86%E6%9E%B6%E5%BC%80%E5%8F%9106-%E7%BB%99%E5%9F%9F%E5%90%8D%E6%B7%BB%E5%8A%A0%E9%85%8D%E7%BD%AE/image-1.png"/>
+        <meta class="swiftype" name="image" data-type="enum" content="https://1416018124.github.io/Openresty%E6%A1%86%E6%9E%B6%E5%BC%80%E5%8F%9106-%E7%BB%99%E5%9F%9F%E5%90%8D%E6%B7%BB%E5%8A%A0%E9%85%8D%E7%BD%AE/image-1.png"/>
+    
+    
+        <meta property="og:image" content="https://1416018124.github.io/Openresty%E6%A1%86%E6%9E%B6%E5%BC%80%E5%8F%9106-%E7%BB%99%E5%9F%9F%E5%90%8D%E6%B7%BB%E5%8A%A0%E9%85%8D%E7%BD%AE/image-2.png"/>
+        <meta class="swiftype" name="image" data-type="enum" content="https://1416018124.github.io/Openresty%E6%A1%86%E6%9E%B6%E5%BC%80%E5%8F%9106-%E7%BB%99%E5%9F%9F%E5%90%8D%E6%B7%BB%E5%8A%A0%E9%85%8D%E7%BD%AE/image-2.png"/>
+    
+    
+    <!--STYLES-->
+    
+<link rel="stylesheet" href="/assets/css/style-xvfnj2o9xv19zzpzzydweqhvegynmqvndecmgp9x1tqnkjmbbtwsdcdaxggz.min.css">
+
+    <!--STYLES END-->
+    
+
+    
+
+    
+</head>
+
+    <body>
+        <div id="blog">
+            <!-- Define author's picture -->
+
+
+    
+
+<header id="header" data-behavior="4">
+    <i id="btn-open-sidebar" class="fa fa-lg fa-bars"></i>
+    <div class="header-title">
+        <a
+            class="header-title-link"
+            href="/"
+            aria-label=""
+        >
+            Hexo
+        </a>
+    </div>
+    
+        
+            <a
+                class="header-right-picture "
+                href="#about"
+                aria-label="打开链接: /#about"
+            >
+        
+        
+        </a>
+    
+</header>
+
+            <!-- Define author's picture -->
+
+
+<nav id="sidebar" data-behavior="4">
+    <div class="sidebar-container">
+        
+        
+            <ul class="sidebar-buttons">
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/"
+                            
+                            rel="noopener"
+                            title="首页"
+                        >
+                        <i class="sidebar-button-icon fa fa-home" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">首页</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/all-categories"
+                            
+                            rel="noopener"
+                            title="分类"
+                        >
+                        <i class="sidebar-button-icon fa fa-bookmark" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">分类</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/all-tags"
+                            
+                            rel="noopener"
+                            title="标签"
+                        >
+                        <i class="sidebar-button-icon fa fa-tags" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">标签</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/all-archives"
+                            
+                            rel="noopener"
+                            title="归档"
+                        >
+                        <i class="sidebar-button-icon fa fa-archive" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">归档</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link open-algolia-search"
+                            href="#search"
+                            
+                            rel="noopener"
+                            title="搜索"
+                        >
+                        <i class="sidebar-button-icon fa fa-search" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">搜索</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="#about"
+                            
+                            rel="noopener"
+                            title="关于"
+                        >
+                        <i class="sidebar-button-icon fa fa-question" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">关于</span>
+                    </a>
+            </li>
+            
+        </ul>
+        
+            <ul class="sidebar-buttons">
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="https://github.com/1416018124"
+                            
+                                target="_blank"
+                            
+                            rel="noopener"
+                            title="GitHub"
+                        >
+                        <i class="sidebar-button-icon fab fa-github" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">GitHub</span>
+                    </a>
+            </li>
+            
+        </ul>
+        
+    </div>
+</nav>
+
+            
+        <div class="post-header-cover
+                    text-center
+                    post-header-cover--full"
+             style="background-image:url('/Openresty%E6%A1%86%E6%9E%B6%E5%BC%80%E5%8F%9106-%E7%BB%99%E5%9F%9F%E5%90%8D%E6%B7%BB%E5%8A%A0%E9%85%8D%E7%BD%AE/image-2.png');"
+             data-behavior="4">
+            
+        </div>
+
+            <div id="main" data-behavior="4"
+                 class="hasCover
+                        hasCoverMetaOut
+                        hasCoverCaption">
+                
+<article class="post">
+    
+        <span class="post-header-cover-caption caption">A beautiful sunrise</span>
+    
+    
+        <div class="post-header main-content-wrap text-center">
+    
+        <h1 class="post-title">
+            Openresty框架开发06-给域名添加配置
+        </h1>
+    
+    
+</div>
+
+    
+    <div class="post-content markdown">
+        <div class="main-content-wrap">
+            <p>​	在前面的教程中，我们有了框架、功能，此章节主要讲解一下如何给域名添加配置。</p>
+<span id="more"></span>
+
+<ol>
+<li><p>域名配置文件在哪里定义</p>
+<p>在这个框架中，init_by_lua_file 会从其中读取一个名为default.conf 的配置文件，它的路径一般就是&#x2F;usr&#x2F;local&#x2F;openresty&#x2F;nginx&#x2F;conf&#x2F;路径下，它的格式如下：</p>
+<figure class="highlight json"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br></pre></td><td class="code"><pre><span class="line"><span class="punctuation">&#123;</span></span><br><span class="line">    <span class="attr">&quot;rule_conf_path&quot;</span><span class="punctuation">:</span> <span class="string">&quot;/usr/local/openresty/nginx/conf/lua.conf&quot;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;redis&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">        <span class="attr">&quot;type&quot;</span><span class="punctuation">:</span> <span class="string">&quot;solo&quot;</span><span class="punctuation">,</span></span><br><span class="line">        <span class="attr">&quot;hosts&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span></span><br><span class="line">            <span class="punctuation">&#123;</span></span><br><span class="line">                <span class="attr">&quot;host&quot;</span><span class="punctuation">:</span> <span class="string">&quot;127.0.0.1&quot;</span><span class="punctuation">,</span></span><br><span class="line">                <span class="attr">&quot;port&quot;</span><span class="punctuation">:</span> <span class="number">6379</span></span><br><span class="line">            <span class="punctuation">&#125;</span></span><br><span class="line">        <span class="punctuation">]</span></span><br><span class="line">    <span class="punctuation">&#125;</span><span class="punctuation">,</span></span><br><span class="line">    <span class="attr">&quot;mmdb&quot;</span><span class="punctuation">:</span> <span class="string">&quot;/usr/local/openresty/GeoLite2-City.mmdb&quot;</span></span><br><span class="line"><span class="punctuation">&#125;</span></span><br><span class="line"></span><br></pre></td></tr></table></figure></li>
+</ol>
+<p>​	可以看到域名的默认配置文件位置在<code>/usr/local/openresty/nginx/conf/lua.conf</code></p>
+<ol start="2">
+<li>这个配置文件如何编写配置</li>
+</ol>
+<p>​	此文件是一个json格式，domain 写你要为哪个域名增加功能配置，注意这个域名必须要在server块里定义。</p>
+<p>​	下面是一个配置的DEMO,还有一些其他的配置，这个后面再讲。</p>
+<figure class="highlight json"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br><span class="line">49</span><br><span class="line">50</span><br><span class="line">51</span><br><span class="line">52</span><br><span class="line">53</span><br><span class="line">54</span><br><span class="line">55</span><br><span class="line">56</span><br><span class="line">57</span><br><span class="line">58</span><br><span class="line">59</span><br><span class="line">60</span><br><span class="line">61</span><br><span class="line">62</span><br><span class="line">63</span><br><span class="line">64</span><br><span class="line">65</span><br><span class="line">66</span><br><span class="line">67</span><br><span class="line">68</span><br></pre></td><td class="code"><pre><span class="line"><span class="punctuation">[</span></span><br><span class="line">    <span class="punctuation">&#123;</span></span><br><span class="line">        <span class="attr">&quot;domain&quot;</span><span class="punctuation">:</span> <span class="string">&quot;gitlab.fengzhigu.cloud&quot;</span><span class="punctuation">,</span></span><br><span class="line">        <span class="attr">&quot;basic&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">            <span class="attr">&quot;service&quot;</span><span class="punctuation">:</span> <span class="string">&quot;gitlab&quot;</span><span class="punctuation">,</span></span><br><span class="line">            <span class="attr">&quot;ip_deny&quot;</span><span class="punctuation">:</span> <span class="literal"><span class="keyword">true</span></span></span><br><span class="line">        <span class="punctuation">&#125;</span><span class="punctuation">,</span></span><br><span class="line">        <span class="attr">&quot;connlimit&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">            <span class="attr">&quot;limit_type&quot;</span><span class="punctuation">:</span> <span class="string">&quot;user&quot;</span><span class="punctuation">,</span></span><br><span class="line">            <span class="attr">&quot;limit_defalut_user&quot;</span><span class="punctuation">:</span> <span class="string">&quot;anonymous&quot;</span><span class="punctuation">,</span></span><br><span class="line">            <span class="attr">&quot;dry_run&quot;</span><span class="punctuation">:</span> <span class="literal"><span class="keyword">false</span></span><span class="punctuation">,</span></span><br><span class="line">            <span class="attr">&quot;limit_common_on&quot;</span><span class="punctuation">:</span> <span class="literal"><span class="keyword">true</span></span><span class="punctuation">,</span></span><br><span class="line">            <span class="attr">&quot;default_args&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span></span><br><span class="line">                <span class="punctuation">&#123;</span></span><br><span class="line">                    <span class="attr">&quot;max&quot;</span><span class="punctuation">:</span> <span class="number">3</span><span class="punctuation">,</span></span><br><span class="line">                    <span class="attr">&quot;limit_location&quot;</span><span class="punctuation">:</span> <span class="string">&quot;upload&quot;</span></span><br><span class="line">                <span class="punctuation">&#125;</span><span class="punctuation">,</span></span><br><span class="line">                <span class="punctuation">&#123;</span></span><br><span class="line">                    <span class="attr">&quot;max&quot;</span><span class="punctuation">:</span> <span class="number">1</span><span class="punctuation">,</span></span><br><span class="line">                    <span class="attr">&quot;limit_location&quot;</span><span class="punctuation">:</span> <span class="string">&quot;download&quot;</span></span><br><span class="line">                <span class="punctuation">&#125;</span><span class="punctuation">,</span></span><br><span class="line">                <span class="punctuation">&#123;</span></span><br><span class="line">                    <span class="attr">&quot;max&quot;</span><span class="punctuation">:</span><span class="number">1</span></span><br><span class="line">                <span class="punctuation">&#125;</span></span><br><span class="line">            <span class="punctuation">]</span><span class="punctuation">,</span></span><br><span class="line">            <span class="attr">&quot;limit_args&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span></span><br><span class="line">                <span class="punctuation">&#123;</span></span><br><span class="line">                    <span class="attr">&quot;key&quot;</span><span class="punctuation">:</span> <span class="string">&quot;anonymous&quot;</span><span class="punctuation">,</span></span><br><span class="line">                    <span class="attr">&quot;max&quot;</span><span class="punctuation">:</span> <span class="number">100</span><span class="punctuation">,</span></span><br><span class="line">                    <span class="attr">&quot;limit_location&quot;</span><span class="punctuation">:</span> <span class="string">&quot;upload&quot;</span></span><br><span class="line">                <span class="punctuation">&#125;</span><span class="punctuation">,</span></span><br><span class="line">                <span class="punctuation">&#123;</span></span><br><span class="line">                    <span class="attr">&quot;key&quot;</span><span class="punctuation">:</span> <span class="string">&quot;anonymous&quot;</span><span class="punctuation">,</span></span><br><span class="line">                    <span class="attr">&quot;max&quot;</span><span class="punctuation">:</span> <span class="number">4</span><span class="punctuation">,</span></span><br><span class="line">                    <span class="attr">&quot;limit_location&quot;</span><span class="punctuation">:</span> <span class="string">&quot;download&quot;</span></span><br><span class="line">                <span class="punctuation">&#125;</span></span><br><span class="line">            <span class="punctuation">]</span></span><br><span class="line">        <span class="punctuation">&#125;</span><span class="punctuation">,</span></span><br><span class="line">        <span class="attr">&quot;reqlimit&quot;</span><span class="punctuation">:</span> <span class="punctuation">&#123;</span></span><br><span class="line">            <span class="attr">&quot;limit_type&quot;</span><span class="punctuation">:</span> <span class="string">&quot;user&quot;</span><span class="punctuation">,</span></span><br><span class="line">            <span class="attr">&quot;dry_run&quot;</span><span class="punctuation">:</span> <span class="literal"><span class="keyword">false</span></span><span class="punctuation">,</span></span><br><span class="line">            <span class="attr">&quot;limit_default_user&quot;</span><span class="punctuation">:</span> <span class="string">&quot;anonymous&quot;</span><span class="punctuation">,</span></span><br><span class="line">            <span class="attr">&quot;limit_common_on&quot;</span><span class="punctuation">:</span> <span class="literal"><span class="keyword">true</span></span><span class="punctuation">,</span></span><br><span class="line">            <span class="attr">&quot;default_args&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span></span><br><span class="line">                <span class="punctuation">&#123;</span></span><br><span class="line">                    <span class="attr">&quot;rate&quot;</span><span class="punctuation">:</span> <span class="string">&quot;1r/s&quot;</span><span class="punctuation">,</span></span><br><span class="line">                    <span class="attr">&quot;limit_location&quot;</span><span class="punctuation">:</span> <span class="string">&quot;upload&quot;</span></span><br><span class="line">                <span class="punctuation">&#125;</span><span class="punctuation">,</span></span><br><span class="line">                <span class="punctuation">&#123;</span></span><br><span class="line">                    <span class="attr">&quot;rate&quot;</span><span class="punctuation">:</span> <span class="string">&quot;1r/s&quot;</span><span class="punctuation">,</span></span><br><span class="line">                    <span class="attr">&quot;limit_location&quot;</span><span class="punctuation">:</span> <span class="string">&quot;download&quot;</span></span><br><span class="line">                <span class="punctuation">&#125;</span><span class="punctuation">,</span></span><br><span class="line">                <span class="punctuation">&#123;</span></span><br><span class="line">                    <span class="attr">&quot;rate&quot;</span><span class="punctuation">:</span> <span class="string">&quot;1r/s&quot;</span></span><br><span class="line">                <span class="punctuation">&#125;</span></span><br><span class="line"></span><br><span class="line">            <span class="punctuation">]</span><span class="punctuation">,</span></span><br><span class="line">            <span class="attr">&quot;limit_args&quot;</span><span class="punctuation">:</span> <span class="punctuation">[</span></span><br><span class="line">                <span class="punctuation">&#123;</span></span><br><span class="line">                    <span class="attr">&quot;key&quot;</span><span class="punctuation">:</span> <span class="string">&quot;anonymous&quot;</span><span class="punctuation">,</span></span><br><span class="line">                    <span class="attr">&quot;rate&quot;</span><span class="punctuation">:</span> <span class="string">&quot;100r/s&quot;</span><span class="punctuation">,</span></span><br><span class="line">                    <span class="attr">&quot;limit_location&quot;</span><span class="punctuation">:</span> <span class="string">&quot;upload&quot;</span></span><br><span class="line">                <span class="punctuation">&#125;</span></span><br><span class="line">            <span class="punctuation">]</span></span><br><span class="line">        <span class="punctuation">&#125;</span></span><br><span class="line">    <span class="punctuation">&#125;</span></span><br><span class="line"><span class="punctuation">]</span></span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>重点介绍一下次配置最上面的几个</p>
+<ul>
+<li>domain: 它是作为redis的key，当用户请求过来时，会拿请求中的Host来去查内存中的值。</li>
+<li>basic.service: 这个相当于一个标识符，告诉Openresty这个服务是什么，代码中会用它来拼接redis的key</li>
+<li>basic.ip_deny: 是否开启黑白名单</li>
+</ul>
+<ol start="3">
+<li>配置有了，如何开启</li>
+</ol>
+<p>​	现在域名配置有了，此时我们需要再域名的server块中加载一下我们的主函数即可。</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br></pre></td><td class="code"><pre><span class="line">upstream gitlab &#123;</span><br><span class="line">    server 10.43.23.227;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">server &#123;</span><br><span class="line">        listen 80 ;</span><br><span class="line">        server_name gitlab.fengzhigu.cloud;</span><br><span class="line">        access_log logs/gitlab_access.log http_access;</span><br><span class="line">        access_by_lua_file lua/access/access_main.lua;</span><br><span class="line"></span><br><span class="line">        root  html;</span><br><span class="line">        proxy_read_timeout      3600;</span><br><span class="line">        proxy_connect_timeout   300;</span><br><span class="line">        proxy_redirect          off;</span><br><span class="line">        proxy_http_version 1.1;</span><br><span class="line"></span><br><span class="line">        proxy_set_header Host $host;</span><br><span class="line">        proxy_set_header X-Real-IP $remote_addr;</span><br><span class="line">        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;</span><br><span class="line">        set $limit_location &#x27;&#x27;;</span><br><span class="line">        #proxy_set_header Upgrade $http_upgrade;</span><br><span class="line"></span><br><span class="line">        location /  &#123;</span><br><span class="line">            proxy_pass http://gitlab;</span><br><span class="line">            #return 404;</span><br><span class="line">        &#125;</span><br><span class="line">    &#125;</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+<p>lua&#x2F;access&#x2F;access_main.lua 是我们的限制访问主函数，正常情况下我们的限制会有多种多样的，比如请求数限制，连接数限制，请求速率限制、UA黑白名单等等，此时就可以在这个access_main.lua中调用其他的功能。</p>
+<figure class="highlight lua"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br><span class="line">46</span><br><span class="line">47</span><br><span class="line">48</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">--[[</span></span><br><span class="line"><span class="comment">http 请求 access_by_lua 入口函数</span></span><br><span class="line"><span class="comment"></span></span><br><span class="line"><span class="comment">在这里根据域名的lua.json,判断需要的功能，然后按需执行</span></span><br><span class="line"><span class="comment"></span></span><br><span class="line"><span class="comment">Author: Jiang Feng</span></span><br><span class="line"><span class="comment">Date: Mon Sep 30 11:17:38 AM CST 2024</span></span><br><span class="line"><span class="comment"></span></span><br><span class="line"><span class="comment">--]]</span></span><br><span class="line"><span class="keyword">local</span> get_conf = <span class="built_in">require</span>(<span class="string">&quot;get_conf&quot;</span>)</span><br><span class="line"><span class="keyword">local</span> <span class="function"><span class="keyword">function</span> <span class="title">main</span><span class="params">()</span></span></span><br><span class="line">    <span class="comment">--对于没有配置lua.conf的请求，默认跳过</span></span><br><span class="line">    <span class="keyword">if</span> get_conf.get_domainconf(ngx.var.host) == <span class="literal">nil</span> <span class="keyword">then</span></span><br><span class="line">        <span class="keyword">return</span></span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line">    <span class="keyword">local</span> basic = get_conf.app(<span class="string">&quot;basic&quot;</span>)</span><br><span class="line">    <span class="keyword">local</span> service = basic.service <span class="keyword">or</span> <span class="string">&quot;default&quot;</span></span><br><span class="line">    <span class="keyword">if</span> basic.ip_deny == <span class="literal">true</span> <span class="keyword">then</span></span><br><span class="line">        <span class="comment">-- IP黑白名单</span></span><br><span class="line">        <span class="keyword">local</span> ip_deny = <span class="built_in">require</span>(<span class="string">&quot;ip_deny&quot;</span>)</span><br><span class="line">        <span class="keyword">local</span> res = ip_deny.ip_rule(service)</span><br><span class="line">        <span class="keyword">if</span> res <span class="keyword">then</span></span><br><span class="line">            <span class="keyword">local</span> user = ngx.var.remote_user <span class="keyword">or</span> <span class="string">&quot;none&quot;</span></span><br><span class="line">            <span class="keyword">local</span> user_ip = ngx.var.remote_addr</span><br><span class="line">            ngx.<span class="built_in">log</span>(ngx.ERR,</span><br><span class="line">                <span class="string">&quot;&#123;\&quot;user\&quot;: \&quot;&quot;</span> .. user .. <span class="string">&quot;\&quot;, \&quot;client_address\&quot;: \&quot;&quot;</span> .. user_ip .. <span class="string">&quot;\&quot;,\&quot;err\&quot;:\&quot;ip_deny\&quot;&#125;&quot;</span>)</span><br><span class="line"></span><br><span class="line">            ngx.<span class="built_in">exit</span>(<span class="number">403</span>)</span><br><span class="line">        <span class="keyword">end</span></span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line">    <span class="keyword">local</span> reqlimitTable = get_conf.app(<span class="string">&quot;reqlimit&quot;</span>)</span><br><span class="line">    <span class="keyword">if</span> reqlimitTable <span class="keyword">then</span></span><br><span class="line">        <span class="comment">-- 执行request limit</span></span><br><span class="line">        <span class="keyword">local</span> reqlimit = <span class="built_in">require</span>(<span class="string">&quot;reqlimit_logic&quot;</span>)</span><br><span class="line">        reqlimit.req_limit_logic(reqlimitTable, service)</span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"></span><br><span class="line">    <span class="keyword">local</span> connlimitTable = get_conf.app(<span class="string">&quot;connlimit&quot;</span>)</span><br><span class="line"></span><br><span class="line">    <span class="keyword">if</span> connlimitTable <span class="keyword">then</span></span><br><span class="line">        <span class="comment">-- 执行connnect limit</span></span><br><span class="line">        <span class="keyword">local</span> connlimit = <span class="built_in">require</span>(<span class="string">&quot;connlimit_logic&quot;</span>)</span><br><span class="line">        connlimit.conn_limit_logic(connlimitTable, service)</span><br><span class="line">    <span class="keyword">end</span></span><br><span class="line"><span class="keyword">end</span></span><br><span class="line"></span><br><span class="line">main()</span><br><span class="line"></span><br></pre></td></tr></table></figure>
+
+
+
+
+
+
+
+<p>参考案例：</p>
+<p><a target="_blank" rel="noopener" href="https://github.com/1416018124/openresty-build/tree/framework_design">https://github.com/1416018124/openresty-build/tree/framework_design</a></p>
+
+            
+
+
+        </div>
+    </div>
+    <div id="post-footer" class="post-footer main-content-wrap">
+        
+            <div class="post-footer-tags">
+                <span class="text-color-light text-small">标签</span><br/>
+                
+    <a class="tag tag--primary tag--small t-none-link" href="/tags/openresty/" rel="tag">openresty</a>
+
+            </div>
+        
+        
+        
+    </div>
+</article>
+
+
+
+                <footer id="footer" class="main-content-wrap">
+    <span class="copyrights">
+        Copyrights &copy; 2025 Jiang Feng. All Rights Reserved.
+    </span>
+</footer>
+
+            </div>
+            
+        </div>
+        
+
+
+<div id="about">
+    <div id="about-card">
+        <div id="about-btn-close">
+            <i class="fa fa-times"></i>
+        </div>
+        
+            <h4 id="about-card-name">Jiang Feng</h4>
+        
+            <div id="about-card-bio"><p>author.bio</p>
+</div>
+        
+        
+            <div id="about-card-job">
+                <i class="fa fa-briefcase"></i>
+                <br/>
+                <p>author.job</p>
+
+            </div>
+        
+        
+    </div>
+</div>
+
+        
+        
+<div id="cover" style="background-image:url('/assets/images/cover.jpg');"></div>
+        <!--SCRIPTS-->
+
+<script src="/assets/js/script-p2ssgnbftin4xedccxbuog4edl9jkt5x6ei7phvwevjlrkkr0xvvl08iwpyl.min.js"></script>
+
+<!--SCRIPTS END-->
+
+
+
+
+
+    </body>
+</html>

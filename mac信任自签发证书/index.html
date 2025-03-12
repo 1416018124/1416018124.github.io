@@ -11,20 +11,20 @@
     
     
     
-    <script type="application/ld+json">{"@context":"http://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Jiang Feng","sameAs":["https://github.com/1416018124"]},"articleBody":"我们在前面部署了gitlab 和harbor 服务，但是这时也会有一个问题，当使用https协议访问时，就会出现证书不信任的情况，只要使用https，就会出现异常访问的情况，因此我们需要再自己的电脑上和服务器上信任此自签发的证书。\n没有信任钱访问会出现如下错误。\n\n\n\n\n\n\n1.Mac信任证书1.1 获取签发证书信息我环境部署的服务使用的都是同一个泛域名证书 *.fengzhigu.cloud，一来省去了多次签发的麻烦，二来使用泛域名更符合生产环境的使用，因此我只需要添加一个证书即可。\n吧证书放到本地，保存成pem或crt格式，需要有ca的这一部分（上下两段），如下所示：\n\n在钥匙串访问 中操作\n打开 钥匙串访问后找到系统，然后点击菜单栏中的 “文件” -&gt; “导入项目”。\n\n\n\n在弹出的文件选择对话框中，找到你获取到的 CA 证书文件（.crt 或 .pem），选择该文件后点击 “打开”。\n找到你的证书和CA，展开 “信任” 部分，在 “使用此证书时” 下拉菜单中选择 “始终信任”\n\n此时在打开我们部署的服务，证书就会正常了\n","dateCreated":"2025-01-24T23:05:49+08:00","dateModified":"2025-01-24T23:17:07+08:00","datePublished":"2025-01-24T23:05:49+08:00","description":"我们在前面部署了gitlab 和harbor 服务，但是这时也会有一个问题，当使用https协议访问时，就会出现证书不信任的情况，只要使用https，就会出现异常访问的情况，因此我们需要再自己的电脑上和服务器上信任此自签发的证书。\n没有信任钱访问会出现如下错误。\n\n","headline":"mac信任自签发证书","image":[],"mainEntityOfPage":{"@type":"WebPage","@id":"https://1416018124.github.io/mac%E4%BF%A1%E4%BB%BB%E8%87%AA%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6/"},"publisher":{"@type":"Organization","name":"Jiang Feng","sameAs":["https://github.com/1416018124"]},"url":"https://1416018124.github.io/mac%E4%BF%A1%E4%BB%BB%E8%87%AA%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6/"}</script>
-    <meta name="description" content="我们在前面部署了gitlab 和harbor 服务，但是这时也会有一个问题，当使用https协议访问时，就会出现证书不信任的情况，只要使用https，就会出现异常访问的情况，因此我们需要再自己的电脑上和服务器上信任此自签发的证书。 没有信任钱访问会出现如下错误。">
+    <script type="application/ld+json">{"@context":"http://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Jiang Feng","sameAs":["https://github.com/1416018124"]},"articleBody":"我们在前面部署了gitlab 和harbor 服务，但是这时也会有一个问题，当使用https协议访问时，就会出现证书不信任的情况，只要使用https，就会出现异常访问的情况，因此我们需要再自己的电脑上和服务器上信任此自签发的证书。\n\n\n没有信任钱访问会出现如下错误。\n\n\n1.Mac信任证书1.1 获取签发证书信息我环境部署的服务使用的都是同一个泛域名证书 *.fengzhigu.cloud，一来省去了多次签发的麻烦，二来使用泛域名更符合生产环境的使用，因此我只需要添加一个证书即可。\n吧证书放到本地，保存成pem或crt格式，需要有ca的这一部分（上下两段），如下所示：\n\n在钥匙串访问 中操作\n打开 钥匙串访问后找到系统，然后点击菜单栏中的 “文件” -&gt; “导入项目”。\n\n\n\n在弹出的文件选择对话框中，找到你获取到的 CA 证书文件（.crt 或 .pem），选择该文件后点击 “打开”。\n找到你的证书和CA，展开 “信任” 部分，在 “使用此证书时” 下拉菜单中选择 “始终信任”\n\n此时在打开我们部署的服务，证书就会正常了\n","dateCreated":"2025-01-24T23:05:49+08:00","dateModified":"2025-03-12T22:29:32+08:00","datePublished":"2025-01-24T23:05:49+08:00","description":"我们在前面部署了gitlab 和harbor 服务，但是这时也会有一个问题，当使用https协议访问时，就会出现证书不信任的情况，只要使用https，就会出现异常访问的情况，因此我们需要再自己的电脑上和服务器上信任此自签发的证书。","headline":"mac信任自签发证书","image":[],"mainEntityOfPage":{"@type":"WebPage","@id":"https://1416018124.github.io/mac%E4%BF%A1%E4%BB%BB%E8%87%AA%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6/"},"publisher":{"@type":"Organization","name":"Jiang Feng","sameAs":["https://github.com/1416018124"]},"url":"https://1416018124.github.io/mac%E4%BF%A1%E4%BB%BB%E8%87%AA%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6/"}</script>
+    <meta name="description" content="我们在前面部署了gitlab 和harbor 服务，但是这时也会有一个问题，当使用https协议访问时，就会出现证书不信任的情况，只要使用https，就会出现异常访问的情况，因此我们需要再自己的电脑上和服务器上信任此自签发的证书。">
 <meta property="og:type" content="blog">
 <meta property="og:title" content="mac信任自签发证书">
 <meta property="og:url" content="https://1416018124.github.io/mac%E4%BF%A1%E4%BB%BB%E8%87%AA%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6/index.html">
 <meta property="og:site_name" content="Hexo">
-<meta property="og:description" content="我们在前面部署了gitlab 和harbor 服务，但是这时也会有一个问题，当使用https协议访问时，就会出现证书不信任的情况，只要使用https，就会出现异常访问的情况，因此我们需要再自己的电脑上和服务器上信任此自签发的证书。 没有信任钱访问会出现如下错误。">
+<meta property="og:description" content="我们在前面部署了gitlab 和harbor 服务，但是这时也会有一个问题，当使用https协议访问时，就会出现证书不信任的情况，只要使用https，就会出现异常访问的情况，因此我们需要再自己的电脑上和服务器上信任此自签发的证书。">
 <meta property="og:locale" content="zh_CN">
 <meta property="og:image" content="https://1416018124.github.io/mac%E4%BF%A1%E4%BB%BB%E8%87%AA%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6/image-20250124230821480.png">
 <meta property="og:image" content="https://1416018124.github.io/mac%E4%BF%A1%E4%BB%BB%E8%87%AA%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6/image-20250124230844063.png">
 <meta property="og:image" content="https://1416018124.github.io/mac%E4%BF%A1%E4%BB%BB%E8%87%AA%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6/image-20250124231309864.png">
 <meta property="og:image" content="https://1416018124.github.io/mac%E4%BF%A1%E4%BB%BB%E8%87%AA%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6/image-20250124231448912.png">
 <meta property="article:published_time" content="2025-01-24T15:05:49.000Z">
-<meta property="article:modified_time" content="2025-01-24T15:17:07.183Z">
+<meta property="article:modified_time" content="2025-03-12T14:29:32.684Z">
 <meta property="article:author" content="Jiang Feng">
 <meta name="twitter:card" content="summary">
 <meta name="twitter:image" content="https://1416018124.github.io/mac%E4%BF%A1%E4%BB%BB%E8%87%AA%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6/image-20250124230821480.png">
@@ -231,13 +231,11 @@
     <div class="post-content markdown">
         <div class="main-content-wrap">
             <p>我们在前面部署了gitlab 和harbor 服务，但是这时也会有一个问题，当使用https协议访问时，就会出现证书不信任的情况，只要使用https，就会出现异常访问的情况，因此我们需要再自己的电脑上和服务器上信任此自签发的证书。</p>
+<span id="more"></span>
+
 <p>没有信任钱访问会出现如下错误。</p>
 <p><img src="/mac%E4%BF%A1%E4%BB%BB%E8%87%AA%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6/image-20250124230821480.png" alt="image-20250124230821480"></p>
 <p><img src="/mac%E4%BF%A1%E4%BB%BB%E8%87%AA%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6/image-20250124230844063.png" alt="image-20250124230844063"></p>
-<span id="more"></span>
-
-
-
 <h1 id="1-Mac信任证书"><a href="#1-Mac信任证书" class="headerlink" title="1.Mac信任证书"></a>1.Mac信任证书</h1><h2 id="1-1-获取签发证书信息"><a href="#1-1-获取签发证书信息" class="headerlink" title="1.1 获取签发证书信息"></a>1.1 获取签发证书信息</h2><p>我环境部署的服务使用的都是同一个泛域名证书 <code>*.fengzhigu.cloud</code>，一来省去了多次签发的麻烦，二来使用泛域名更符合生产环境的使用，因此我只需要添加一个证书即可。</p>
 <p>吧证书放到本地，保存成pem或crt格式，需要有ca的这一部分（上下两段），如下所示：</p>
 <p><img src="/mac%E4%BF%A1%E4%BB%BB%E8%87%AA%E7%AD%BE%E5%8F%91%E8%AF%81%E4%B9%A6/image-20250124231309864.png" alt="image-20250124231309864"></p>
